@@ -58,3 +58,12 @@
 - KiCad, Gerber, Excellon, DXF, PDF, pick-and-place, and manufacturing exports remain unavailable until standards-backed parsers/exporters and fixtures are added.
 - Verified 3D component models, electrical pin-type checking, net-aware interactive routing, pad-level connectivity, configurable clearance/width dialogs, and database-backed multi-device project history remain outstanding.
 - Capacitor/Android native integration is not installed; the next step is a toolchain-confirmed Capacitor wrapper and a validated APK build.
+
+
+## Phase 2 — critical engineering corrections
+
+Completed: robust track intersection and distance handling; separated track, edge, via, and pad clearances; explicit pin-graph connectivity checks; crossing-wire and disconnected-net detection; rotated footprint-pad transforms; via diameter, annular geometry, edge, and clearance checks; strict JSON validation with unique-ID, finite-number, layer, dimension, and nested-field checks; legacy project migration; pointer capture, pointer cancel, lost-pointer-capture restoration, and one-transaction drag history.
+
+Regression coverage now includes perpendicular crossings, parallel clearance positive and negative cases, collinear overlap, endpoint touching, zero-length segments, different copper layers, board-edge and via geometry, rotated pads, pad clearances, pin connectivity, wire crossings, disconnected nets, duplicate IDs, malformed coordinates, invalid layers, NaN/Infinity rejection, and legacy JSON migration.
+
+Still data-dependent or unsupported: production-grade DRC for components without verified footprint geometry, polygon board outlines, full layer-span via connectivity, verified electrical pin types, net-aware routing, spatial indexing for very large designs, standards-backed manufacturing exports, and Android packaging. These remain explicitly labeled rather than approximated as complete.

@@ -1,125 +1,89 @@
 export type Point = { x: number; y: number };
 export type Severity = "Error" | "Warning" | "Info";
-export type EngineeringComponent = {
-  id: string;
-  ref: string;
-  value?: string;
-  footprint?: string;
-  x: number;
-  y: number;
-  rotation?: number;
-  layer?: "F.Cu" | "B.Cu";
-};
-export type EngineeringWire = { id: string; from: Point; to: Point; net?: string };
-export type EngineeringTrack = { id: string; from: Point; to: Point; width: number; layer: "F.Cu" | "B.Cu" };
-export type EngineeringVia = { id: string; x: number; y: number; drill: number; diameter?: number };
-export type EngineeringProject = {
-  components: EngineeringComponent[];
-  wires: EngineeringWire[];
-  tracks: EngineeringTrack[];
-  vias: EngineeringVia[];
-  grid?: number;
-  board?: { x: number; y: number; width: number; height: number; edgeClearance: number };
-};
+export type Layer = "F.Cu" | "B.Cu";
+export type Pin = { id: string; number: string; name: string; position: Point; required?: boolean; electricalType?: string };
+export type Pad = { id: string; number: string; position: Point; width: number; height: number; shape?: "circle" | "rect" | "oval"; layer: Layer; drill?: number };
+export type FootprintGeometry = { identifier: string; pads: Pad[]; courtyard?: { width: number; height: number } };
+export type EngineeringComponent = { id: string; ref: string; value?: string; footprint?: string; x: number; y: number; rotation?: number; layer?: Layer; pins?: Pin[]; footprintGeometry?: FootprintGeometry };
+export type EngineeringWire = { id: string; from: Point; to: Point; net?: string; junction?: boolean };
+export type EngineeringTrack = { id: string; from: Point; to: Point; width: number; layer: Layer; net?: string };
+export type EngineeringVia = { id: string; x: number; y: number; drill: number; diameter?: number; layers?: [Layer, Layer] };
+export type DesignRules = { minimumTrackClearance?: number; copperToEdgeClearance?: number; minimumTrackWidth?: number; trackToViaClearance?: number; viaToPadClearance?: number; minimumViaClearance?: number; trackToPadClearance?: number; padToPadClearance?: number; minimumDrillDiameter?: number; minimumAnnularRing?: number };
+export type Board = { x: number; y: number; width: number; height: number; edgeClearance?: number };
+export type EngineeringProject = { projectName?: string; components: EngineeringComponent[]; wires: EngineeringWire[]; tracks: EngineeringTrack[]; vias: EngineeringVia[]; grid?: number; board?: Board; designRules?: DesignRules; junctions?: Point[] };
 export type Measurement = { start: Point; end: Point; distance: number; gridUnits: number };
-export type DrcResult = {
-  id: string;
-  ruleId: string;
-  severity: Severity;
-  objectIds: string[];
-  coordinates?: Point[];
-  explanation: string;
-  correction: string;
-};
+export type DrcResult = { id: string; ruleId: string; severity: Severity; objectIds: string[]; coordinates?: Point[]; explanation: string; correction: string };
+export type ValidationError = { path: string; message: string };
 
-const DEFAULT_BOARD = { x: 150, y: 112, width: 660, height: 328, edgeClearance: 10 };
-const EPSILON = 0.001;
+export const DEFAULT_BOARD: Board = { x: 150, y: 112, width: 660, height: 328, edgeClearance: 10 };
+const EPSILON = 1e-7;
 
-export function distance(a: Point, b: Point) {
-  return Math.hypot(b.x - a.x, b.y - a.y);
-}
+export function distance(a: Point, b: Point) { return Math.hypot(b.x - a.x, b.y - a.y); }
+export function measure(start: Point, end: Point, grid = 20): Measurement { const px = distance(start, end); return { start, end, distance: px, gridUnits: grid > 0 ? px / grid : px }; }
+export function snapToGrid(point: Point, grid: number) { return grid > 0 ? { x: Math.round(point.x / grid) * grid, y: Math.round(point.y / grid) * grid } : point; }
+export function rotatePoint(point: Point, degrees: number) { const radians = degrees * Math.PI / 180; const cos = Math.cos(radians); const sin = Math.sin(radians); return { x: point.x * cos - point.y * sin, y: point.x * sin + point.y * cos }; }
+export function transformLocalPoint(origin: Point, local: Point, rotation = 0) { const rotated = rotatePoint(local, rotation); return { x: origin.x + rotated.x, y: origin.y + rotated.y }; }
+export function route45(start: Point, end: Point): Point[] { const dx = end.x - start.x; const dy = end.y - start.y; if (Math.abs(dx) < EPSILON || Math.abs(dy) < EPSILON || Math.abs(Math.abs(dx) - Math.abs(dy)) < EPSILON) return [start, end]; const diagonal = Math.min(Math.abs(dx), Math.abs(dy)); return [start, { x: start.x + Math.sign(dx) * diagonal, y: start.y }, end]; }
 
-export function measure(start: Point, end: Point, grid = 20): Measurement {
-  const px = distance(start, end);
-  return { start, end, distance: px, gridUnits: grid > 0 ? px / grid : px };
-}
+function orientation(a: Point, b: Point, c: Point) { const value = (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x); return Math.abs(value) <= EPSILON ? 0 : value > 0 ? 1 : -1; }
+function onSegment(a: Point, b: Point, point: Point) { return point.x >= Math.min(a.x, b.x) - EPSILON && point.x <= Math.max(a.x, b.x) + EPSILON && point.y >= Math.min(a.y, b.y) - EPSILON && point.y <= Math.max(a.y, b.y) + EPSILON; }
+export function segmentsIntersect(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point) { const aZero = distance(aStart, aEnd) <= EPSILON; const bZero = distance(bStart, bEnd) <= EPSILON; if (aZero && bZero) return distance(aStart, bStart) <= EPSILON; if (aZero) return orientation(bStart, bEnd, aStart) === 0 && onSegment(bStart, bEnd, aStart); if (bZero) return orientation(aStart, aEnd, bStart) === 0 && onSegment(aStart, aEnd, bStart); const o1 = orientation(aStart, aEnd, bStart); const o2 = orientation(aStart, aEnd, bEnd); const o3 = orientation(bStart, bEnd, aStart); const o4 = orientation(bStart, bEnd, aEnd); return o1 !== o2 && o3 !== o4 || o1 === 0 && onSegment(aStart, aEnd, bStart) || o2 === 0 && onSegment(aStart, aEnd, bEnd) || o3 === 0 && onSegment(bStart, bEnd, aStart) || o4 === 0 && onSegment(bStart, bEnd, aEnd); }
+function pointToSegment(point: Point, start: Point, end: Point) { const dx = end.x - start.x; const dy = end.y - start.y; const lengthSquared = dx * dx + dy * dy; if (lengthSquared <= EPSILON) return distance(point, start); const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared)); return distance(point, { x: start.x + t * dx, y: start.y + t * dy }); }
+export function segmentDistance(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point) { if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) return 0; return Math.min(pointToSegment(aStart, bStart, bEnd), pointToSegment(aEnd, bStart, bEnd), pointToSegment(bStart, aStart, aEnd), pointToSegment(bEnd, aStart, aEnd)); }
 
-export function snapToGrid(point: Point, grid: number) {
-  if (grid <= 0) return point;
-  return { x: Math.round(point.x / grid) * grid, y: Math.round(point.y / grid) * grid };
-}
+function result(ruleId: string, severity: Severity, objectIds: string[], explanation: string, correction: string, coordinates?: Point[]): DrcResult { return { id: `${ruleId}:${objectIds.join(",")}`, ruleId, severity, objectIds, explanation, correction, coordinates }; }
+function finite(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value); }
+function validPoint(value: unknown): value is Point { return !!value && typeof value === "object" && finite((value as Point).x) && finite((value as Point).y); }
+function boardContains(point: Point, board: Board, margin = 0) { return point.x >= board.x + margin - EPSILON && point.x <= board.x + board.width - margin + EPSILON && point.y >= board.y + margin - EPSILON && point.y <= board.y + board.height - margin + EPSILON; }
+function segmentInsideRect(start: Point, end: Point, board: Board, margin: number) { const expanded = { x: board.x + margin, y: board.y + margin, width: board.width - margin * 2, height: board.height - margin * 2 }; if (!boardContains(start, board, margin) || !boardContains(end, board, margin)) return false; const corners: Point[] = [{ x: expanded.x, y: expanded.y }, { x: expanded.x + expanded.width, y: expanded.y }, { x: expanded.x + expanded.width, y: expanded.y + expanded.height }, { x: expanded.x, y: expanded.y + expanded.height }]; return ![[corners[0], corners[1]], [corners[1], corners[2]], [corners[2], corners[3]], [corners[3], corners[0]]].some(([a, b]) => segmentsIntersect(start, end, a, b)); }
+function localPads(component: EngineeringComponent) { return component.footprintGeometry?.pads.map(pad => ({ ...pad, position: transformLocalPoint({ x: component.x, y: component.y }, pad.position, component.rotation ?? 0) })) ?? []; }
 
-export function route45(start: Point, end: Point): Point[] {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  if (Math.abs(dx) < EPSILON || Math.abs(dy) < EPSILON || Math.abs(Math.abs(dx) - Math.abs(dy)) < EPSILON) return [start, end];
-  const diagonal = Math.min(Math.abs(dx), Math.abs(dy));
-  const mid = { x: start.x + Math.sign(dx) * diagonal, y: start.y };
-  return [start, mid, end];
-}
-
-function pointToSegment(point: Point, start: Point, end: Point) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
-  const lengthSquared = dx * dx + dy * dy;
-  if (lengthSquared === 0) return distance(point, start);
-  const t = Math.max(0, Math.min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared));
-  return distance(point, { x: start.x + t * dx, y: start.y + t * dy });
-}
-
-function segmentsDistance(a: EngineeringTrack, b: EngineeringTrack) {
-  return Math.min(pointToSegment(a.from, b.from, b.to), pointToSegment(a.to, b.from, b.to), pointToSegment(b.from, a.from, a.to), pointToSegment(b.to, a.from, a.to));
-}
-
-function insideBoard(point: Point, board: typeof DEFAULT_BOARD, margin = 0) {
-  return point.x >= board.x + margin && point.x <= board.x + board.width - margin && point.y >= board.y + margin && point.y <= board.y + board.height - margin;
-}
-
-function result(ruleId: string, severity: Severity, objectIds: string[], explanation: string, correction: string, coordinates?: Point[]): DrcResult {
-  return { id: `${ruleId}:${objectIds.join(",")}`, ruleId, severity, objectIds, explanation, correction, coordinates };
-}
-
-export function validateSchematic(project: Pick<EngineeringProject, "components" | "wires">): DrcResult[] {
+export function validateSchematic(project: Pick<EngineeringProject, "components" | "wires" | "junctions">): DrcResult[] {
   const findings: DrcResult[] = [];
-  const refs = new Map<string, EngineeringComponent[]>();
-  project.components.forEach(component => refs.set(component.ref, [...(refs.get(component.ref) ?? []), component]));
-  refs.forEach((items, ref) => { if (items.length > 1) findings.push(result("SCH_DUPLICATE_REFERENCE", "Error", items.map(item => item.id), `Reference ${ref} is used more than once.`, "Assign a unique reference designator to each component.", items.map(item => ({ x: item.x, y: item.y })))); });
+  const refs = new Map<string, EngineeringComponent[]>(); const ids = new Set<string>();
+  project.components.forEach(component => { refs.set(component.ref, [...(refs.get(component.ref) ?? []), component]); if (ids.has(component.id)) findings.push(result("SCH_DUPLICATE_COMPONENT_ID", "Error", [component.id], `Component ID ${component.id} is duplicated.`, "Assign a stable unique component ID.")); ids.add(component.id); });
+  refs.forEach((items, ref) => { if (items.length > 1) findings.push(result("SCH_DUPLICATE_REFERENCE", "Error", items.map(item => item.id), `Reference ${ref} is used more than once.`, "Assign a unique reference designator.", items.map(item => ({ x: item.x, y: item.y })))); });
   project.components.forEach(component => {
-    if (!component.value?.trim()) findings.push(result("SCH_MISSING_VALUE", "Warning", [component.id], `${component.ref} has no value.`, "Set a meaningful value before generating a BOM.", [{ x: component.x, y: component.y }]));
-    if (!component.footprint?.trim() || component.footprint === "Not assigned") findings.push(result("SCH_MISSING_FOOTPRINT", "Error", [component.id], `${component.ref} has no assigned footprint.`, "Assign a verified footprint before manufacturing.", [{ x: component.x, y: component.y }]));
-    const connected = project.wires.some(wire => distance({ x: component.x, y: component.y }, wire.from) < 48 || distance({ x: component.x, y: component.y }, wire.to) < 48);
-    if (!connected) findings.push(result("SCH_UNCONNECTED_COMPONENT", "Error", [component.id], `${component.ref} is not connected to a wire endpoint.`, "Connect the component pins to a named net.", [{ x: component.x, y: component.y }]));
+    if (!component.value?.trim()) findings.push(result("SCH_MISSING_VALUE", "Warning", [component.id], `${component.ref} has no value.`, "Set a value before generating a BOM.", [{ x: component.x, y: component.y }]));
+    if (!component.pins?.length) findings.push(result("SCH_UNVERIFIED_PIN_GEOMETRY", "Info", [component.id], `${component.ref} has no verified pin geometry; pin connectivity is not fully validated.`, "Attach a verified symbol definition with pin coordinates.", [{ x: component.x, y: component.y }]));
   });
-  const netGroups = new Map<string, EngineeringWire[]>();
-  project.wires.forEach(wire => { const net = wire.net || `__wire_${wire.id}`; netGroups.set(net, [...(netGroups.get(net) ?? []), wire]); });
-  netGroups.forEach((wires, net) => { const endpoints = wires.flatMap(wire => [wire.from, wire.to]); const visited = new Set<number>(); const stack = [0]; while (stack.length) { const index = stack.pop()!; if (visited.has(index)) continue; visited.add(index); endpoints.forEach((point, pointIndex) => { if (!visited.has(pointIndex) && distance(endpoints[index], point) <= 1) stack.push(pointIndex); }); } if (visited.size !== endpoints.length) findings.push(result("SCH_DISCONNECTED_NET", "Error", wires.map(wire => wire.id), `Net ${net} contains disconnected wire segments.`, "Join the segments or correct the net label.", endpoints)); });
+  const pinNodes = project.components.flatMap(component => (component.pins ?? []).map(pin => ({ id: `${component.id}:${pin.id}`, point: transformLocalPoint({ x: component.x, y: component.y }, pin.position, component.rotation ?? 0), required: pin.required !== false })));
+  const wireIds = new Set<string>(); project.wires.forEach(wire => { if (wireIds.has(wire.id)) findings.push(result("SCH_DUPLICATE_WIRE_ID", "Error", [wire.id], `Wire ID ${wire.id} is duplicated.`, "Assign a stable unique wire ID.")); wireIds.add(wire.id); if (!validPoint(wire.from) || !validPoint(wire.to)) findings.push(result("SCH_INVALID_WIRE_ENDPOINT", "Error", [wire.id], "Wire endpoint coordinates are invalid.", "Repair the wire endpoints before editing the project.")); });
+  pinNodes.forEach(pin => { const connected = project.wires.some(wire => pointToSegment(pin.point, wire.from, wire.to) <= 1); if (pin.required && !connected) findings.push(result("SCH_UNCONNECTED_REQUIRED_PIN", "Error", [pin.id], `Required pin ${pin.id} is not connected to a wire.`, "Connect the pin to a net or mark it intentionally unused.", [pin.point])); });
+  for (let i = 0; i < project.wires.length; i += 1) for (let j = i + 1; j < project.wires.length; j += 1) { const a = project.wires[i]; const b = project.wires[j]; if (!segmentsIntersect(a.from, a.to, b.from, b.to)) continue; const endpointTouch = [a.from, a.to].some(point => pointToSegment(point, b.from, b.to) <= 1) || [b.from, b.to].some(point => pointToSegment(point, a.from, a.to) <= 1); const junction = project.junctions?.some(point => pointToSegment(point, a.from, a.to) <= 1 && pointToSegment(point, b.from, b.to) <= 1) ?? false; if (!endpointTouch && !junction && a.net !== b.net) findings.push(result("SCH_CROSSING_WITHOUT_JUNCTION", "Warning", [a.id, b.id], "Two wires cross without an explicit junction.", "Add a junction or route the wires without crossing.", [a.from, a.to, b.from, b.to])); }
+  const netGroups = new Map<string, EngineeringWire[]>(); project.wires.forEach(wire => { if (wire.net) netGroups.set(wire.net, [...(netGroups.get(wire.net) ?? []), wire]); });
+  netGroups.forEach((wires, net) => { for (let i = 0; i < wires.length; i += 1) for (let j = i + 1; j < wires.length; j += 1) { const a = wires[i]; const b = wires[j]; const connected = segmentsIntersect(a.from, a.to, b.from, b.to) || distance(a.from, b.from) <= 1 || distance(a.from, b.to) <= 1 || distance(a.to, b.from) <= 1 || distance(a.to, b.to) <= 1; if (!connected) findings.push(result("SCH_DISCONNECTED_NET", "Error", [a.id, b.id], `Net ${net} contains disconnected wire segments.`, "Join the segments or correct the net label.", [a.from, a.to, b.from, b.to])); } });
   return findings;
 }
 
-export function validatePcb(project: Pick<EngineeringProject, "components" | "tracks" | "vias"> & Partial<Pick<EngineeringProject, "wires" | "board">>): DrcResult[] {
-  const board = project.board ?? DEFAULT_BOARD;
-  const findings: DrcResult[] = [];
-  project.components.forEach(component => {
-    if (!insideBoard({ x: component.x, y: component.y }, board)) findings.push(result("PCB_COMPONENT_OUTSIDE_BOARD", "Error", [component.id], `${component.ref} is outside the board boundary.`, "Move the component inside the board outline.", [{ x: component.x, y: component.y }]));
-    if (!component.footprint?.trim() || component.footprint === "Not assigned") findings.push(result("PCB_INVALID_FOOTPRINT", "Error", [component.id], `${component.ref} does not have a verified footprint.`, "Assign a verified footprint before export.", [{ x: component.x, y: component.y }]));
-  });
-  project.tracks.forEach(track => {
-    const endpoints = [track.from, track.to];
-    endpoints.forEach(point => { if (!insideBoard(point, board, board.edgeClearance)) findings.push(result("PCB_EDGE_CLEARANCE", "Error", [track.id], "A track violates the configured copper-to-edge clearance.", "Move the route inward or adjust the verified board constraint.", endpoints)); });
-    project.tracks.filter(other => other.id !== track.id && other.layer === track.layer && other.id > track.id).forEach(other => { const required = (track.width + other.width) / 2 + board.edgeClearance; const actual = segmentsDistance(track, other); if (actual < required) findings.push(result("PCB_TRACK_CLEARANCE", "Error", [track.id, other.id], `Tracks are ${actual.toFixed(2)} units apart; ${required.toFixed(2)} is required.`, "Reroute one segment or increase spacing.", [track.from, track.to, other.from, other.to])); });
-    project.components.forEach(component => { const actual = pointToSegment({ x: component.x, y: component.y }, track.from, track.to); const required = track.width / 2 + board.edgeClearance / 2; if (actual < required) findings.push(result("PCB_TRACK_TO_PAD_CLEARANCE", "Warning", [track.id, component.id], `${track.id} passes too close to ${component.ref}.`, "Reroute around the component pad area.", [{ x: component.x, y: component.y }])); });
-  });
-  project.vias.forEach(via => { if (!insideBoard({ x: via.x, y: via.y }, board, board.edgeClearance)) findings.push(result("PCB_VIA_EDGE_CLEARANCE", "Error", [via.id], "A via violates the configured board-edge clearance.", "Move the via inward.", [{ x: via.x, y: via.y }])); project.tracks.forEach(track => { if (pointToSegment({ x: via.x, y: via.y }, track.from, track.to) < (via.diameter ?? via.drill * 2) / 2 + board.edgeClearance / 2) findings.push(result("PCB_TRACK_TO_VIA_CLEARANCE", "Warning", [track.id, via.id], `${track.id} passes too close to ${via.id}.`, "Reroute the track or move the via.", [{ x: via.x, y: via.y }])); }); });
-  for (let i = 0; i < project.components.length; i += 1) for (let j = i + 1; j < project.components.length; j += 1) { const a = project.components[i]; const b = project.components[j]; if (distance({ x: a.x, y: a.y }, { x: b.x, y: b.y }) < 48) findings.push(result("PCB_COMPONENT_CLEARANCE", "Warning", [a.id, b.id], `${a.ref} and ${b.ref} overlap the minimum component clearance.`, "Move one component away from the other.", [{ x: a.x, y: a.y }, { x: b.x, y: b.y }])); }
+export function validatePcb(project: Pick<EngineeringProject, "components" | "tracks" | "vias"> & Partial<Pick<EngineeringProject, "board" | "designRules">>): DrcResult[] {
+  const board = project.board ?? DEFAULT_BOARD; const rules = project.designRules ?? {}; const findings: DrcResult[] = [];
+  const trackIds = new Set<string>(); project.tracks.forEach(track => { if (trackIds.has(track.id)) findings.push(result("PCB_DUPLICATE_TRACK_ID", "Error", [track.id], `Track ID ${track.id} is duplicated.`, "Assign a stable unique track ID.")); trackIds.add(track.id); if (!finite(track.width) || track.width <= 0) findings.push(result("PCB_INVALID_TRACK_WIDTH", "Error", [track.id], "Track width must be positive and finite.", "Set a valid track width.")); if (!rules.minimumTrackClearance) findings.push(result("PCB_RULE_UNCONFIGURED", "Info", [track.id], "Track-to-track clearance cannot be fully validated because minimumTrackClearance is not configured.", "Configure project-specific design rules.")); const margin = (track.width / 2) + (rules.copperToEdgeClearance ?? board.edgeClearance ?? 0); if (!segmentInsideRect(track.from, track.to, board, margin)) findings.push(result("PCB_EDGE_CLEARANCE", "Error", [track.id], "The complete track geometry violates the copper-to-board-edge clearance.", "Move the route inward or configure a verified board outline.", [track.from, track.to])); if (rules.minimumTrackWidth !== undefined && track.width + EPSILON < rules.minimumTrackWidth) findings.push(result("PCB_MINIMUM_TRACK_WIDTH", "Error", [track.id], `Track width ${track.width} is below the configured minimum ${rules.minimumTrackWidth}.`, "Increase the track width.")); });
+  for (let i = 0; i < project.tracks.length; i += 1) for (let j = i + 1; j < project.tracks.length; j += 1) { const a = project.tracks[i]; const b = project.tracks[j]; if (a.layer !== b.layer) continue; const clearance = rules.minimumTrackClearance; if (clearance === undefined) continue; const actual = segmentDistance(a.from, a.to, b.from, b.to); if (actual + EPSILON < (a.width + b.width) / 2 + clearance) findings.push(result("PCB_TRACK_CLEARANCE", "Error", [a.id, b.id], `Tracks are ${actual.toFixed(2)} units apart; ${clearance} units of clearance is required.`, "Reroute one track or increase spacing.", [a.from, a.to, b.from, b.to])); }
+  project.components.forEach(component => { if (!component.footprintGeometry) { findings.push(result("PCB_FOOTPRINT_GEOMETRY_UNAVAILABLE", "Info", [component.id], `${component.ref} has no structured footprint geometry; pad and courtyard checks are limited.`, "Attach a verified footprint definition.")); return; } const pads = localPads(component); pads.forEach(pad => { project.tracks.forEach(track => { const padRadius = Math.max(pad.width, pad.height) / 2; const clearance = rules.trackToPadClearance; if (clearance !== undefined && pointToSegment(pad.position, track.from, track.to) < track.width / 2 + padRadius + clearance) findings.push(result("PCB_TRACK_TO_PAD_CLEARANCE", "Error", [track.id, component.id, pad.id], `${track.id} violates clearance to pad ${pad.id}.`, "Reroute the track away from the pad.", [pad.position])); }); project.vias.forEach(via => { const clearance = rules.viaToPadClearance; const viaRadius = (via.diameter ?? via.drill * 2) / 2; if (clearance !== undefined && distance(pad.position, { x: via.x, y: via.y }) < viaRadius + Math.max(pad.width, pad.height) / 2 + clearance) findings.push(result("PCB_VIA_TO_PAD_CLEARANCE", "Error", [component.id, pad.id, via.id], `${via.id} violates clearance to pad ${pad.id}.`, "Move the via or use a verified pad escape route.", [pad.position, { x: via.x, y: via.y }])); }); }); for (let i = 0; i < pads.length; i += 1) for (let j = i + 1; j < pads.length; j += 1) { const clearance = rules.padToPadClearance; if (clearance !== undefined && distance(pads[i].position, pads[j].position) < Math.max(pads[i].width, pads[i].height) / 2 + Math.max(pads[j].width, pads[j].height) / 2 + clearance) findings.push(result("PCB_PAD_TO_PAD_CLEARANCE", "Error", [component.id, pads[i].id, pads[j].id], `Pads ${pads[i].id} and ${pads[j].id} violate pad-to-pad clearance.`, "Move the pads or use a verified footprint with correct spacing.", [pads[i].position, pads[j].position])); } });
+  const viaIds = new Set<string>(); project.vias.forEach(via => { if (viaIds.has(via.id)) findings.push(result("PCB_DUPLICATE_VIA_ID", "Error", [via.id], `Via ID ${via.id} is duplicated.`, "Assign a stable unique via ID.")); viaIds.add(via.id); const diameter = via.diameter ?? via.drill * 2; if (!finite(via.drill) || via.drill <= 0 || !finite(diameter) || diameter <= via.drill) findings.push(result("PCB_INVALID_VIA_GEOMETRY", "Error", [via.id], "Via outer diameter must be finite and greater than drill diameter.", "Set valid drill and outer diameter values.", [{ x: via.x, y: via.y }])); if (rules.minimumDrillDiameter !== undefined && via.drill < rules.minimumDrillDiameter) findings.push(result("PCB_MINIMUM_DRILL_DIAMETER", "Error", [via.id], "Via drill is below the configured minimum drill diameter.", "Increase the drill diameter." , [{ x: via.x, y: via.y }])); if (rules.minimumAnnularRing !== undefined && (diameter - via.drill) / 2 < rules.minimumAnnularRing) findings.push(result("PCB_MINIMUM_ANNULAR_RING", "Error", [via.id], "Via annular ring is below the configured minimum.", "Increase the via outer diameter." , [{ x: via.x, y: via.y }])); if (!via.layers) findings.push(result("PCB_VIA_LAYER_SPAN_UNAVAILABLE", "Info", [via.id], "Via layer-span information is unavailable; cross-layer connectivity is not assumed.", "Specify the verified start and end copper layers.")); const edge = rules.copperToEdgeClearance ?? board.edgeClearance ?? 0; if (!boardContains({ x: via.x, y: via.y }, board, diameter / 2 + edge)) findings.push(result("PCB_VIA_EDGE_CLEARANCE", "Error", [via.id], "Via geometry violates the configured board-edge clearance.", "Move the via inward." , [{ x: via.x, y: via.y }])); project.tracks.forEach(track => { const clearance = rules.trackToViaClearance; if (clearance !== undefined && pointToSegment({ x: via.x, y: via.y }, track.from, track.to) < diameter / 2 + track.width / 2 + clearance) findings.push(result("PCB_TRACK_TO_VIA_CLEARANCE", "Error", [track.id, via.id], `${track.id} violates clearance to ${via.id}.`, "Reroute the track or move the via.", [{ x: via.x, y: via.y }])); }); });
+  for (let i = 0; i < project.vias.length; i += 1) for (let j = i + 1; j < project.vias.length; j += 1) { const a = project.vias[i]; const b = project.vias[j]; const clearance = rules.minimumViaClearance; if (clearance !== undefined && distance({ x: a.x, y: a.y }, { x: b.x, y: b.y }) < (a.diameter ?? a.drill * 2) / 2 + (b.diameter ?? b.drill * 2) / 2 + clearance) findings.push(result("PCB_VIA_TO_VIA_CLEARANCE", "Error", [a.id, b.id], "Vias violate the configured via-to-via clearance.", "Move one via or change the verified via geometry.", [{ x: a.x, y: a.y }, { x: b.x, y: b.y }])); }
   return findings;
 }
 
-export function runDesignRules(project: EngineeringProject): DrcResult[] {
-  return [...validateSchematic(project), ...validatePcb(project)];
+export function runDesignRules(project: EngineeringProject) { return [...validateSchematic(project), ...validatePcb(project)]; }
+
+function uniqueIds(items: Array<{ id: string }>, path: string, errors: ValidationError[]) { const seen = new Set<string>(); items.forEach((item, index) => { if (typeof item.id !== "string" || !item.id) errors.push({ path: `${path}[${index}].id`, message: "must be a non-empty string" }); else if (seen.has(item.id)) errors.push({ path: `${path}[${index}].id`, message: "must be unique" }); else seen.add(item.id); }); }
+function validateCoordinates(value: unknown, path: string, errors: ValidationError[]) { if (!validPoint(value)) errors.push({ path, message: "must contain finite numeric x and y" }); }
+
+export function validateProjectJsonDetailed(value: unknown): { ok: boolean; errors: ValidationError[] } {
+  const errors: ValidationError[] = []; if (!value || typeof value !== "object") return { ok: false, errors: [{ path: "$", message: "project must be an object" }] }; const project = value as Partial<EngineeringProject>;
+  ["components", "wires", "tracks", "vias"].forEach(field => { if (!Array.isArray(project[field as keyof EngineeringProject])) errors.push({ path: field, message: "must be an array" }); });
+  if (!finite(project.grid) || (project.grid ?? 0) <= 0) errors.push({ path: "grid", message: "must be a positive finite number" });
+  uniqueIds(Array.isArray(project.components) ? project.components : [], "components", errors); uniqueIds(Array.isArray(project.wires) ? project.wires : [], "wires", errors); uniqueIds(Array.isArray(project.tracks) ? project.tracks : [], "tracks", errors); uniqueIds(Array.isArray(project.vias) ? project.vias : [], "vias", errors);
+  (Array.isArray(project.components) ? project.components : []).forEach((component, index) => { if (!component || typeof component !== "object") { errors.push({ path: `components[${index}]`, message: "must be an object" }); return; } if (typeof component.ref !== "string" || !component.ref) errors.push({ path: `components[${index}].ref`, message: "must be a non-empty string" }); validateCoordinates(component, `components[${index}]`, errors); if (!finite(component.rotation ?? 0)) errors.push({ path: `components[${index}].rotation`, message: "must be finite" }); if (component.layer !== undefined && component.layer !== "F.Cu" && component.layer !== "B.Cu") errors.push({ path: `components[${index}].layer`, message: "must be F.Cu or B.Cu" }); });
+  (Array.isArray(project.wires) ? project.wires : []).forEach((wire, index) => { validateCoordinates(wire?.from, `wires[${index}].from`, errors); validateCoordinates(wire?.to, `wires[${index}].to`, errors); });
+  (Array.isArray(project.tracks) ? project.tracks : []).forEach((track, index) => { validateCoordinates(track?.from, `tracks[${index}].from`, errors); validateCoordinates(track?.to, `tracks[${index}].to`, errors); if (!finite(track?.width) || (track?.width ?? 0) <= 0) errors.push({ path: `tracks[${index}].width`, message: "must be positive and finite" }); if (track?.layer !== "F.Cu" && track?.layer !== "B.Cu") errors.push({ path: `tracks[${index}].layer`, message: "must be F.Cu or B.Cu" }); });
+  (Array.isArray(project.vias) ? project.vias : []).forEach((via, index) => { validateCoordinates(via, `vias[${index}]`, errors); if (!finite(via?.drill) || (via?.drill ?? 0) <= 0) errors.push({ path: `vias[${index}].drill`, message: "must be positive and finite" }); if (via?.diameter !== undefined && (!finite(via.diameter) || via.diameter <= via.drill)) errors.push({ path: `vias[${index}].diameter`, message: "must be greater than drill" }); });
+  if (project.board !== undefined) { const board = project.board; if (!finite(board.width) || board.width <= 0) errors.push({ path: "board.width", message: "must be positive and finite" }); if (!finite(board.height) || board.height <= 0) errors.push({ path: "board.height", message: "must be positive and finite" }); if (!finite(board.x) || !finite(board.y)) errors.push({ path: "board", message: "origin must be finite" }); if (board.edgeClearance !== undefined && (!finite(board.edgeClearance) || board.edgeClearance < 0)) errors.push({ path: "board.edgeClearance", message: "must be finite and non-negative" }); }
+  if (project.designRules !== undefined) Object.entries(project.designRules).forEach(([key, value]) => { if (!finite(value) || value < 0) errors.push({ path: `designRules.${key}`, message: "must be finite and non-negative" }); });
+  return { ok: errors.length === 0, errors };
 }
 
-export function validateProjectJson(value: unknown): value is EngineeringProject {
-  if (!value || typeof value !== "object") return false;
-  const project = value as Partial<EngineeringProject>;
-  return Array.isArray(project.components) && Array.isArray(project.wires) && Array.isArray(project.tracks) && Array.isArray(project.vias) && project.components.every(component => typeof component.id === "string" && typeof component.ref === "string" && typeof component.x === "number" && typeof component.y === "number");
-}
+export function migrateProjectJson(value: unknown): EngineeringProject | null { if (!value || typeof value !== "object") return null; const source = value as Record<string, unknown>; const migrated: unknown = { ...source, grid: source.grid ?? 20, activeLayer: source.activeLayer ?? "F.Cu", wires: source.wires ?? [], tracks: source.tracks ?? [], vias: source.vias ?? [], components: source.components ?? [] }; return validateProjectJsonDetailed(migrated).ok ? migrated as EngineeringProject : null; }
+export function validateProjectJson(value: unknown): value is EngineeringProject { return validateProjectJsonDetailed(value).ok; }

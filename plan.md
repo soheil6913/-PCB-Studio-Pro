@@ -60,3 +60,10 @@ The refinement adds `shared/engineering.ts` as the authoritative pure-function b
 Measurement state is intentionally local to the schematic canvas: the first click stores the start point, the second click stores the end point without clearing the start, and double-click resets the measurement. Local persistence is debounced and rejects invalid stored JSON before replacing the current project. Board dimensions are now preserved as optional project data for backward-compatible JSON round trips.
 
 Mobile behavior keeps the full desktop panels in the DOM and exposes them through a fixed drawer plus bottom navigation at narrow widths. Canvas interaction remains pointer-event based with `touch-action: none`, so dragging and measurement do not hand scroll gestures to the browser. Android packaging is assessed in `ANDROID_READINESS.md`; Capacitor is the selected future wrapper, but no APK is claimed until the native build toolchain and artifact are validated.
+
+
+## Phase 2 engineering corrections
+
+The geometry core now uses a true segment-to-segment distance algorithm with intersection, endpoint-touch, collinear-overlap, parallel, and zero-length handling. PCB clearance rules are separated into explicit project configuration fields; missing configuration produces an informational unconfigured-rule result instead of silently borrowing board-edge clearance.
+
+Schematic checks now prefer explicit pin geometry and wire intersections. Component-center proximity is no longer treated as electrical proof. Footprint-aware pad transforms support local coordinates plus component rotation, while components without verified footprint data are reported as limited rather than treated as production-grade DRC. JSON validation is structured and field-specific, with legacy-array migration for older projects.
