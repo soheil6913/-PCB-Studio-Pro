@@ -74,6 +74,20 @@ describe("engineering core", () => {
     expect(findings.some(finding => finding.ruleId === "SCH_DISCONNECTED_NET")).toBe(true);
   });
 
+  it("builds a three-wire chain, supports a junction branch, and reports conflicting net names", () => {
+    const chained = validateSchematic({ components: [], wires: [{ id: "a", from: { x: 0, y: 0 }, to: { x: 10, y: 0 }, net: "N1" }, { id: "b", from: { x: 10, y: 0 }, to: { x: 20, y: 0 }, net: "N1" }, { id: "c", from: { x: 20, y: 0 }, to: { x: 30, y: 0 }, net: "N1" }] });
+    expect(chained.some(finding => finding.ruleId === "SCH_DISCONNECTED_NET")).toBe(false);
+    const branch = validateSchematic({ components: [], junctions: [{ x: 10, y: 10 }], wires: [{ id: "a", from: { x: 0, y: 10 }, to: { x: 20, y: 10 }, net: "N1" }, { id: "b", from: { x: 10, y: 0 }, to: { x: 10, y: 20 }, net: "N1" }] });
+    expect(branch.some(finding => finding.ruleId === "SCH_CROSSING_WITHOUT_JUNCTION")).toBe(false);
+    const conflict = validateSchematic({ components: [], wires: [{ id: "a", from: { x: 0, y: 0 }, to: { x: 10, y: 0 }, net: "VCC" }, { id: "b", from: { x: 10, y: 0 }, to: { x: 20, y: 0 }, net: "GND" }] });
+    expect(conflict.some(finding => finding.ruleId === "SCH_NET_NAME_CONFLICT")).toBe(true);
+  });
+
+  it("does not merge separated wires that happen to share a net label", () => {
+    const findings = validateSchematic({ components: [], wires: [{ id: "a", from: { x: 0, y: 0 }, to: { x: 10, y: 0 }, net: "DATA" }, { id: "b", from: { x: 100, y: 0 }, to: { x: 110, y: 0 }, net: "DATA" }] });
+    expect(findings.filter(finding => finding.ruleId === "SCH_DISCONNECTED_NET")).toHaveLength(1);
+  });
+
   it("validates duplicate IDs, invalid coordinates, invalid layers, and non-finite values", () => {
     const invalid = { ...empty, grid: Number.NaN, components: [{ id: "c", ref: "R1", x: Number.POSITIVE_INFINITY, y: 0 }, { id: "c", ref: "R2", x: 0, y: 0 }], tracks: [{ id: "t", from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, width: -1, layer: "X" }], vias: [] };
     const checked = validateProjectJsonDetailed(invalid);
@@ -81,6 +95,19 @@ describe("engineering core", () => {
     expect(checked.errors.some(error => error.path === "grid")).toBe(true);
     expect(checked.errors.some(error => error.path.includes("components[1].id"))).toBe(true);
     expect(checked.errors.some(error => error.path.includes("tracks[0].width"))).toBe(true);
+  });
+
+  it("rejects unknown future versions, null nested data, and malformed footprint pads", () => {
+    expect(validateProjectJsonDetailed({ schemaVersion: 99, components: [], wires: [], tracks: [], vias: [] }).ok).toBe(false);
+    expect(validateProjectJsonDetailed({ components: null, wires: [], tracks: [], vias: [] }).ok).toBe(false);
+    const malformed = validateProjectJsonDetailed({ components: [{ id: "u", ref: "U1", x: 0, y: 0, footprintGeometry: { identifier: "FP", pads: [{ id: "1", number: "1", position: null, width: 0, height: 1, layer: "F.Cu" }] } }], wires: [], tracks: [], vias: [] });
+    expect(malformed.errors.some(error => error.path.includes("footprintGeometry.pads[0].position"))).toBe(true);
+  });
+
+  it("fails DRC safely on malformed runtime project data", () => {
+    const findings = runDesignRules({ components: null, wires: [], tracks: [], vias: [] } as never);
+    expect(findings[0]?.ruleId).toBe("PROJECT_INVALID");
+    expect(findings[0]?.severity).toBe("Error");
   });
 
   it("migrates legacy projects with absent optional arrays and rejects corrupted roots", () => {
@@ -96,5 +123,16 @@ describe("engineering core", () => {
   it("runs both schematic and PCB rules through the aggregate engine", () => {
     const findings = runDesignRules({ ...empty, components: [{ id: "u", ref: "U1", x: 20, y: 20 }] });
     expect(findings.some(finding => finding.ruleId === "SCH_UNVERIFIED_PIN_GEOMETRY")).toBe(true);
+  });
+
+  it("checks pads across different components and respects layer-specific track and via connectivity", () => {
+    const component = (id: string, x: number, layer: "F.Cu" | "B.Cu") => ({ id, ref: id, x, y: 150, footprintGeometry: { identifier: "FP", pads: [{ id: `${id}-1`, number: "1", position: { x: 0, y: 0 }, width: 10, height: 6, shape: "rect" as const, layer }] } });
+    const padFindings = validatePcb({ ...empty, components: [component("U1", 100, "F.Cu"), component("U2", 108, "F.Cu")] });
+    expect(padFindings.some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE" && finding.objectIds.includes("U1-1") && finding.objectIds.includes("U2-1"))).toBe(true);
+    const otherLayer = validatePcb({ ...empty, components: [component("U1", 100, "F.Cu")], tracks: [{ id: "back", from: { x: 95, y: 150 }, to: { x: 105, y: 150 }, width: 2, layer: "B.Cu" }] });
+    expect(otherLayer.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(false);
+    const through = { id: "TH1", ref: "J1", x: 150, y: 150, footprintGeometry: { identifier: "TH", pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 10, height: 10, shape: "circle" as const, layer: "F.Cu" as const, layers: ["F.Cu", "B.Cu"] as ("F.Cu" | "B.Cu")[], drill: 2, plated: true }] } };
+    const frontTrack = validatePcb({ ...empty, components: [through], tracks: [{ id: "front", from: { x: 140, y: 150 }, to: { x: 160, y: 150 }, width: 2, layer: "F.Cu" }] });
+    expect(frontTrack.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
   });
 });
