@@ -41,3 +41,20 @@
 - Keep UI, geometry state, localization, DRC, library data, and interchange boundaries modular and maintainable.
 - Provide a Persian/English implementation plan and an explicit build/deployment path in the project documentation.
 - Include a sample project for testing the editing and validation slice.
+
+
+## Refinement status — implemented and tested
+
+- Added a pure engineering core for measurement, grid snapping, 45-degree route construction, graph-based schematic connectivity, PCB boundary/clearance/track/via/component checks, structured DRC findings, and project JSON validation.
+- Fixed measurement lifecycle so both points remain after the second click; the distance and grid-unit value remain visible, and double-click resets the measurement.
+- Added debounced local autosave and validation of stored/imported JSON before state replacement; board dimensions remain optional and backward-compatible.
+- Added mobile panel drawers and bottom navigation rather than permanently hiding the library, properties, or DRC panels. Canvas pointer events remain touch-safe.
+- Added focused DRC object selection behavior and route45-based PCB segments. Autorouting is not claimed.
+- Added unit coverage for measurement, routing, duplicate references, missing footprints, disconnected nets, PCB geometry, and JSON validation.
+- Added a source ZIP helper and an Android readiness assessment; no APK is claimed.
+
+## Outstanding and explicitly unavailable
+
+- KiCad, Gerber, Excellon, DXF, PDF, pick-and-place, and manufacturing exports remain unavailable until standards-backed parsers/exporters and fixtures are added.
+- Verified 3D component models, electrical pin-type checking, net-aware interactive routing, pad-level connectivity, configurable clearance/width dialogs, and database-backed multi-device project history remain outstanding.
+- Capacitor/Android native integration is not installed; the next step is a toolchain-confirmed Capacitor wrapper and a validated APK build.

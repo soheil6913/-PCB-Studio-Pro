@@ -51,3 +51,12 @@ Chosen direction: **Graphite Instrument Panel**.
 ## Runtime
 
 Use the initialized React/Express/tRPC/Drizzle project with the managed port 3000. Run `pnpm dev` for the server-backed preview. The current first slice stores the active project in browser local storage and supports real file download/upload so project data is not trapped in the UI. The database schema remains the correct home for multi-device persistence and version history in the next increment.
+
+
+## Refinement architecture
+
+The refinement adds `shared/engineering.ts` as the authoritative pure-function boundary for measurement, grid snapping, 45-degree route construction, schematic connectivity checks, PCB geometry checks, structured DRC results, and project JSON shape validation. The React workspace consumes this boundary instead of deriving DRC status from counts. Each DRC finding carries a rule ID, severity, affected object IDs, coordinates when available, explanation, and correction text; standards-backed manufacturing export remains gated.
+
+Measurement state is intentionally local to the schematic canvas: the first click stores the start point, the second click stores the end point without clearing the start, and double-click resets the measurement. Local persistence is debounced and rejects invalid stored JSON before replacing the current project. Board dimensions are now preserved as optional project data for backward-compatible JSON round trips.
+
+Mobile behavior keeps the full desktop panels in the DOM and exposes them through a fixed drawer plus bottom navigation at narrow widths. Canvas interaction remains pointer-event based with `touch-action: none`, so dragging and measurement do not hand scroll gestures to the browser. Android packaging is assessed in `ANDROID_READINESS.md`; Capacitor is the selected future wrapper, but no APK is claimed until the native build toolchain and artifact are validated.
