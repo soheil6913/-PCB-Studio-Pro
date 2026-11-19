@@ -1,8 +1,12 @@
 # Geometry test completion report
 
-Branch: `test/geometry-rotation-clearance-20261119`
+Original test branch: `test/geometry-rotation-clearance-20261119`
 
-Base commit: `de4db65da94358547e0c35c645617e6cd6a77309`
+Current PR branch: `fix/followup-pad-geometry-json-tolerance-20261119`
+
+Original test baseline: `de4db65da94358547e0c35c645617e6cd6a77309`
+
+Current PR base (`main`): `de7497a675af7c6212bbc4751fce098c1f414e8d`
 
 ## Changes
 
@@ -52,4 +56,4 @@ The production build emits the existing Vite warning about `/api/platform/config
 
 Compared with `de4db65da94358547e0c35c645617e6cd6a77309`, the diff contains the geometry tests, this report, and the `.github/workflows/engineering.yml` `test/**` trigger. No production implementation or Workflow logic was changed because all requested geometry cases pass against the existing algorithms.
 
-`main` remains unchanged and no Pull Request was created or merged by this task.
+The original geometry test task did not create a Pull Request. Its changes were subsequently incorporated into PR #1. PR #1 remains open and has not been merged.
