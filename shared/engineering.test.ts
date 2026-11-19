@@ -67,7 +67,7 @@ describe("engineering core", () => {
         y: 40,
         footprintGeometry: {
           identifier: "EDGE-RECT",
-          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, layer: "F.Cu" as const }],
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, rotation: 45, layer: "F.Cu" as const }],
         },
       },
       {
@@ -90,13 +90,40 @@ describe("engineering core", () => {
           pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 10, height: 4, shape: "oval" as const, rotation: 90, layer: "F.Cu" as const }],
         },
       },
+      {
+        id: "edge-circle",
+        ref: "C1",
+        x: 5.99,
+        y: 160,
+        footprintGeometry: {
+          identifier: "EDGE-CIRCLE",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, shape: "circle" as const, layer: "F.Cu" as const }],
+        },
+      },
     ];
     const findings = validatePcb({ ...empty, components });
     const edgeFindings = findings.filter(finding => finding.ruleId === "PCB_PAD_EDGE_CLEARANCE");
-    expect(edgeFindings).toHaveLength(2);
+    expect(edgeFindings).toHaveLength(3);
     expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-rect", "1"]);
     expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-oval", "1"]);
+    expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-circle", "1"]);
     expect(edgeFindings.some(finding => finding.objectIds.includes("safe-rect"))).toBe(false);
+
+    const stricterRule = validatePcb({
+      ...empty,
+      components: [{
+        id: "rule-edge",
+        ref: "R3",
+        x: 6,
+        y: 220,
+        footprintGeometry: {
+          identifier: "RULE-EDGE",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, layer: "F.Cu" as const }],
+        },
+      }],
+      designRules: { ...rules, copperToEdgeClearance: 6 },
+    });
+    expect(stricterRule.some(finding => finding.ruleId === "PCB_PAD_EDGE_CLEARANCE")).toBe(true);
   });
 
   it("transforms footprint pads and evaluates track-to-pad and pad-to-pad clearance", () => {
