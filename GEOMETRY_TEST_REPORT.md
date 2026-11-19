@@ -6,7 +6,7 @@ Base commit: `de4db65da94358547e0c35c645617e6cd6a77309`
 
 ## Changes
 
-Only `shared/engineering.test.ts` and this report were changed. No production geometry, UI, persistence, RTL/LTR, branding, or CI logic was changed.
+The changed files are `shared/engineering.test.ts`, `GEOMETRY_TEST_REPORT.md`, and `.github/workflows/engineering.yml`. No production geometry, UI, persistence, RTL/LTR, branding, or Workflow logic was changed; the Workflow only gained a push trigger for `test/**` branches so this test branch could run GitHub Actions.
 
 ### Rotated Oval Track-to-Pad
 
@@ -50,6 +50,6 @@ The production build emits the existing Vite warning about `/api/platform/config
 
 ## Diff review
 
-Compared with `de4db65da94358547e0c35c645617e6cd6a77309`, the code diff is test-only plus this report. No production implementation was changed because all requested geometry cases pass against the existing algorithms.
+Compared with `de4db65da94358547e0c35c645617e6cd6a77309`, the diff contains the geometry tests, this report, and the `.github/workflows/engineering.yml` `test/**` trigger. No production implementation or Workflow logic was changed because all requested geometry cases pass against the existing algorithms.
 
 `main` remains unchanged and no Pull Request was created or merged by this task.
