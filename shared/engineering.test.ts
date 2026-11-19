@@ -173,6 +173,38 @@ describe("engineering core", () => {
     expect(viaToPadDistance(circle, { ...via, x: 7, y: 0 })).toBeCloseTo(1, 6);
   });
 
+  it("returns zero clearance for containment and handles tangency, positive gap, and oversized vias", () => {
+    const circle = { id: "circle", number: "1", position: { x: 0, y: 0 }, width: 10, height: 10, shape: "circle" as const, layer: "F.Cu" as const };
+    const oval = { id: "oval", number: "1", position: { x: 0, y: 0 }, width: 12, height: 6, shape: "oval" as const, layer: "F.Cu" as const };
+    const viaAt = (id: string, x: number, y: number, diameter = 2) => ({ id, x, y, drill: diameter / 2, diameter, layers: ["F.Cu", "B.Cu"] as ["F.Cu", "B.Cu"] });
+    const drc = (pad: typeof circle | typeof oval, via: ReturnType<typeof viaAt>, clearance: number) => validatePcb({ ...empty, designRules: { ...rules, viaToPadClearance: clearance }, components: [{ id: "u", ref: "U1", x: 100, y: 100, footprintGeometry: { identifier: "FP", pads: [{ ...pad, position: { x: pad.position.x, y: pad.position.y } }] } }], vias: [{ ...via, x: via.x + 100, y: via.y + 100 }] });
+
+    const centerCircle = viaToPadDistance(circle, viaAt("center-circle", 0, 0));
+    expect(centerCircle).toBe(0);
+    expect(drc(circle, viaAt("center-circle", 0, 0), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+
+    const centerOval = viaToPadDistance(oval, viaAt("center-oval", 0, 0));
+    expect(centerOval).toBe(0);
+    expect(drc(oval, viaAt("center-oval", 0, 0), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+
+    const insideCircle = viaToPadDistance(circle, viaAt("inside-circle", 3, 0));
+    expect(insideCircle).toBe(0);
+    expect(drc(circle, viaAt("inside-circle", 3, 0), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+
+    const tangentCircle = viaToPadDistance(circle, viaAt("tangent-circle", 6, 0));
+    expect(tangentCircle).toBeCloseTo(0, 8);
+    expect(drc(circle, viaAt("tangent-circle", 6, 0), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+
+    const positiveCircle = viaToPadDistance(circle, viaAt("positive-circle", 8, 0));
+    expect(positiveCircle).toBeCloseTo(2, 6);
+    expect(drc(circle, viaAt("positive-circle", 8, 0), 1.99).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(false);
+    expect(drc(circle, viaAt("positive-circle", 8, 0), 2.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+
+    const oversizedVia = viaToPadDistance(circle, viaAt("oversized", 0, 0, 14));
+    expect(oversizedVia).toBe(0);
+    expect(drc(circle, viaAt("oversized", 0, 0, 14), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
   it("changes Via-to-Pad clearance when pad shape and combined rotation change", () => {
     const componentRotation = 90;
     const padRotation = 45;
