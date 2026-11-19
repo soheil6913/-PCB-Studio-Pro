@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONNECT_TOLERANCE,
   migrateProjectJson,
   measure,
   route45,
@@ -123,6 +124,30 @@ describe("engineering core", () => {
   it("runs both schematic and PCB rules through the aggregate engine", () => {
     const findings = runDesignRules({ ...empty, components: [{ id: "u", ref: "U1", x: 20, y: 20 }] });
     expect(findings.some(finding => finding.ruleId === "SCH_UNVERIFIED_PIN_GEOMETRY")).toBe(true);
+  });
+
+  it("accounts for independent rectangular and oval pad rotation after component rotation", () => {
+    const rotatedRect = validatePcb({ ...empty, components: [{ id: "A", ref: "A", x: 0, y: 0, rotation: 45, footprintGeometry: { identifier: "FP", pads: [{ id: "A-1", number: "1", position: { x: 0, y: 0 }, width: 20, height: 4, shape: "rect", layer: "F.Cu", rotation: 45 }] } }, { id: "B", ref: "B", x: 8, y: 6, footprintGeometry: { identifier: "FP", pads: [{ id: "B-1", number: "1", position: { x: 0, y: 0 }, width: 20, height: 4, shape: "rect", layer: "F.Cu" }] } }] });
+    expect(rotatedRect.some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(true);
+    const rotatedOval = validatePcb({ ...empty, components: [{ id: "O1", ref: "O1", x: 0, y: 0, footprintGeometry: { identifier: "FP", pads: [{ id: "O1-1", number: "1", position: { x: 0, y: 0 }, width: 20, height: 4, shape: "oval", layer: "F.Cu", rotation: 90 }] } }, { id: "O2", ref: "O2", x: 8, y: 6, footprintGeometry: { identifier: "FP", pads: [{ id: "O2-1", number: "1", position: { x: 0, y: 0 }, width: 20, height: 4, shape: "oval", layer: "F.Cu" }] } }] });
+    expect(rotatedOval.some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
+  it("validates junctions and all nested pin, pad, footprint, and courtyard fields", () => {
+    const checked = validateProjectJsonDetailed({ schemaVersion: 2, components: [{ id: "u", ref: "U1", x: 0, y: 0, pins: [{ id: "p", number: 1, name: null, position: { x: 0, y: 0 } }], footprintGeometry: { identifier: "", pads: [{ id: "p", number: "1", position: { x: 0, y: 0 }, width: 1, height: 1, layer: "F.Cu", shape: "bad", rotation: "no" }], courtyard: { width: 0, height: -1 } } }], wires: [], tracks: [], vias: [], junctions: [{ x: 0, y: Number.NaN }] });
+    expect(checked.errors.some(error => error.path === "junctions[0]")).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("pins[0].number"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("footprintGeometry.identifier"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("courtyard.width"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("pads[0].shape"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("pads[0].rotation"))).toBe(true);
+  });
+
+  it("does not connect a required pin across a visible gap larger than topology tolerance", () => {
+    const findings = validateSchematic({ components: [{ id: "u", ref: "U1", value: "X", x: 0, y: 0, pins: [{ id: "p", number: "1", name: "P", position: { x: 0, y: 0 }, required: true }] }], wires: [{ id: "w", from: { x: 0.5, y: 0 }, to: { x: 10, y: 0 } }] });
+    expect(findings.some(finding => finding.ruleId === "SCH_UNCONNECTED_REQUIRED_PIN")).toBe(true);
+    const withinTolerance = validateSchematic({ components: [{ id: "u", ref: "U1", value: "X", x: 0, y: 0, pins: [{ id: "p", number: "1", name: "P", position: { x: 0, y: 0 }, required: true }] }], wires: [{ id: "w", from: { x: CONNECT_TOLERANCE / 2, y: 0 }, to: { x: 10, y: 0 } }] });
+    expect(withinTolerance.some(finding => finding.ruleId === "SCH_UNCONNECTED_REQUIRED_PIN")).toBe(false);
   });
 
   it("checks pads across different components and respects layer-specific track and via connectivity", () => {
