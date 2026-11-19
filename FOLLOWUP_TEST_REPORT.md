@@ -58,6 +58,6 @@ pnpm build  → passed
 
 The production build still emits the pre-existing Vite warning that `/api/platform/config.js` lacks a `type="module"` attribute. This warning is unrelated to electrical calculations and DRC correctness.
 
-The engineering test count increased from 19 to 20 in `shared/engineering.test.ts`; the full suite count increased from 22 to 25 because the server tests remain unchanged and the engineering suite gained the follow-up cases.
+The engineering suite now contains 19 tests; the full suite contains 25 tests because the server tests remain unchanged and the engineering suite gained three follow-up test cases. The topology-tolerance boundary assertion is part of the visible-gap test and does not add another test case.
 
 `main` was not modified and was not merged. The follow-up commit is isolated on this branch for review.
