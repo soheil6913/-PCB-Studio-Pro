@@ -96,7 +96,7 @@ passed
 
 The production build retains the existing Vite warning about `/api/platform/config.js` lacking `type="module"`; it does not affect build completion. No test uses `it.fails`, skipped tests, mocked distances, or relaxed assertions to hide the original failures.
 
-The exact GitHub Actions run URL and tested final commit SHA will be appended after the isolated branch push.
+GitHub Actions verification: [run 44489911395](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44489911395) completed with `success` for commit `2c3ee2d4b47ec95196d80fe21d70c9985844dbe8`.
 
 ## Remaining limitations
 
