@@ -83,7 +83,7 @@ describe("engineering core", () => {
       {
         id: "rotated-safe-rect",
         ref: "R4",
-        x: 6.8,
+        x: 7.2,
         y: 100,
         footprintGeometry: {
           identifier: "ROTATED-SAFE-RECT",
