@@ -40,6 +40,11 @@ describe("Phase 4.1 GJK convergence safety", () => {
     // first support point. A valid budget of one therefore exhausts inside GJK.
     const a = oval("a", 0, 0, 10, 4);
     const b = oval("b", 2, 1, 10, 4);
+    // Independent overlap oracle: the Minkowski difference is an ellipse with
+    // semi-axes 10 and 4; (2/10)^2 + (1/4)^2 < 1 places the origin inside it.
+    expect((2 ** 2) / (10 ** 2) + (1 ** 2) / (4 ** 2)).toBeLessThan(1);
+    expect(padToPadDistanceDetailed(a, b)).toMatchObject({ state: "CONVERGED", distance: 0 });
+
     const direct = gjkWithinDistance(a, b, 0, 1);
     expect(direct).toEqual({
       state: "INDETERMINATE",
