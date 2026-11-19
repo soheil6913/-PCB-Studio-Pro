@@ -3,6 +3,7 @@ import {
   CONNECT_TOLERANCE,
   migrateProjectJson,
   measure,
+  padToPadDistance,
   transformLocalPoint,
   route45,
   runDesignRules,
@@ -203,6 +204,16 @@ describe("engineering core", () => {
     const oversizedVia = viaToPadDistance(circle, viaAt("oversized", 0, 0, 14));
     expect(oversizedVia).toBe(0);
     expect(drc(circle, viaAt("oversized", 0, 0, 14), 0.01).some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
+  it("uses actual oval and circle geometry for track and pad-to-pad clearance", () => {
+    const oval = { id: "oval", number: "1", position: { x: 0, y: 0 }, width: 10, height: 4, shape: "oval" as const, layer: "F.Cu" as const };
+    const circle = { id: "circle", number: "1", position: { x: 8, y: 0 }, width: 4, height: 4, shape: "circle" as const, layer: "F.Cu" as const };
+    expect(padToPadDistance(oval, circle)).toBeCloseTo(1, 6);
+    const clearTrack = validatePcb({ ...empty, components: [{ id: "u", ref: "U1", x: 0, y: 0, footprintGeometry: { identifier: "FP", pads: [oval] } }], tracks: [{ id: "clear", from: { x: 4, y: 2.1 }, to: { x: 6, y: 2.1 }, width: 0.2, layer: "F.Cu" }], designRules: { ...rules, trackToPadClearance: 0.2 } });
+    expect(clearTrack.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(false);
+    const touchingTrack = validatePcb({ ...empty, components: [{ id: "u", ref: "U1", x: 0, y: 0, footprintGeometry: { identifier: "FP", pads: [oval] } }], tracks: [{ id: "touching", from: { x: 0, y: 2 }, to: { x: 10, y: 2 }, width: 0.2, layer: "F.Cu" }], designRules: { ...rules, trackToPadClearance: 0.2 } });
+    expect(touchingTrack.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
   });
 
   it("changes Via-to-Pad clearance when pad shape and combined rotation change", () => {
