@@ -139,4 +139,4 @@ This work does not claim IPC compliance, manufacturing readiness, Gerber/KiCad e
 
 The previous false-positive convergence path is eliminated, forced non-convergence is explicit and fail-safe, and all required local tests pass. The remaining limitation is the absence of a formal proof across every possible geometry configuration.
 
-GitHub Actions run URL and the final commit SHA will be appended after this isolated branch is pushed.
+GitHub Actions verification: [run 44491706392](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44491706392) completed with `success` for commit `51e5f9c8279f0341fe0076965053c46be01b23fb`.
