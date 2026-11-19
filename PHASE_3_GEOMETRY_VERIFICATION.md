@@ -23,8 +23,9 @@ Changed on this verification branch:
 
 - `shared/phase3.geometry.test.ts`
 - `PHASE_3_GEOMETRY_VERIFICATION.md`
+- `.github/workflows/engineering.yml` — added only the `verify/**` push trigger so this isolated verification branch can run the existing CI workflow.
 
-No production source, UI, branding, RTL/LTR behavior, persistence, existing tests, or geometry algorithm was changed. The existing implementation was preserved after the defects below were independently reproduced.
+No production source, UI, branding, RTL/LTR behavior, persistence, existing tests, or geometry algorithm was changed. The existing implementation was preserved after the defects below were independently reproduced; Workflow job logic was not changed.
 
 ## Independent methodology
 
@@ -99,7 +100,7 @@ Required project commands will be run on the committed branch:
 
 ## CI and limitations
 
-GitHub Actions status and run URL will be recorded after this branch is pushed. The CI workflow verifies TypeScript, automated tests, and production build; a green CI result does not remove the two numerical defects documented above.
+The existing CI workflow verifies TypeScript, automated tests, and production build; a green CI result does not remove the two numerical defects documented above. The `verify/**` trigger is only to execute that unchanged workflow on this isolated branch; the exact run URL and result are recorded after push.
 
 This phase does not establish IPC compliance, manufacturing readiness, Gerber/KiCad export correctness, external footprint-library correctness, thermal/electrical/impedance simulation, or formal proof of GJK correctness. Unknown layer spans remain explicitly unknown; no cross-layer connectivity is inferred from missing data.
 
