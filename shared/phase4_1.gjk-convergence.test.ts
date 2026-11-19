@@ -35,24 +35,55 @@ describe("Phase 4.1 GJK convergence safety", () => {
     expect(padToPadDistanceDetailed(oval("same-a", 20, 20, 10, 4, 180), oval("same-b", 20, 20, 10, 4, -90))).toMatchObject({ state: "CONVERGED", distance: 0 });
   });
 
-  it("returns INDETERMINATE on forced exhaustion instead of classifying safe", () => {
-    const a = oval("a", 0, 0);
-    const b = oval("b", 0, 8);
-    const direct = gjkWithinDistance(a, b, 0, 0);
-    expect(direct.state).toBe("INDETERMINATE");
-    expect(direct.reason).toContain("iteration");
-    const detailed = padToPadDistanceDetailed(a, b, { gjkMaxIterations: 0 });
+  it("reaches the real GJK loop and reports positive-budget iteration exhaustion", () => {
+    // These overlapping, offset ellipses require another simplex update after the
+    // first support point. A valid budget of one therefore exhausts inside GJK.
+    const a = oval("a", 0, 0, 10, 4);
+    const b = oval("b", 2, 1, 10, 4);
+    const direct = gjkWithinDistance(a, b, 0, 1);
+    expect(direct).toEqual({
+      state: "INDETERMINATE",
+      iterations: 1,
+      reason: "iteration limit exhausted before convergence",
+    });
+
+    const detailed = padToPadDistanceDetailed(a, b, { gjkMaxIterations: 1 });
     expect(detailed.state).toBe("INDETERMINATE");
-    if (detailed.state === "INDETERMINATE") expect(detailed.reason).toContain("iteration");
+    if (detailed.state === "INDETERMINATE") {
+      expect(detailed.iterations).toBe(1);
+      expect(detailed.reason).toContain("iteration limit exhausted before convergence");
+      expect("distance" in detailed).toBe(false);
+    }
   });
 
-  it("surfaces forced indeterminacy as an explicit DRC error", () => {
-    const first = oval("a", 0, 0);
-    const second = oval("b", 0, 8);
-    const findings = validatePcb({ components: [component("U1", first, second)], tracks: [], vias: [], board, designRules: { padToPadClearance: 1 } }, { gjkMaxIterations: 0 });
+  it("reports an invalid zero iteration budget separately from loop exhaustion", () => {
+    const a = oval("a", 0, 0, 10, 4);
+    const b = oval("b", 2, 1, 10, 4);
+    expect(gjkWithinDistance(a, b, 0, 0)).toEqual({
+      state: "INDETERMINATE",
+      iterations: 0,
+      reason: "invalid iteration budget",
+    });
+    const detailed = padToPadDistanceDetailed(a, b, { gjkMaxIterations: 0 });
+    expect(detailed.state).toBe("INDETERMINATE");
+    if (detailed.state === "INDETERMINATE") {
+      expect(detailed.iterations).toBe(0);
+      expect(detailed.reason).toContain("invalid iteration budget");
+      expect("distance" in detailed).toBe(false);
+    }
+  });
+
+  it("surfaces actual positive-budget GJK exhaustion as an explicit DRC error", () => {
+    const first = oval("a", 0, 0, 10, 4);
+    const second = oval("b", 2, 1, 10, 4);
+    const findings = validatePcb(
+      { components: [component("U1", first, second)], tracks: [], vias: [], board, designRules: { padToPadClearance: 1 } },
+      { gjkMaxIterations: 1 },
+    );
     const diagnostic = findings.find(finding => finding.ruleId === "PCB_GEOMETRY_INDETERMINATE");
     expect(diagnostic).toBeDefined();
     expect(diagnostic?.severity).toBe("Error");
+    expect(diagnostic?.explanation).toContain("iteration limit exhausted before convergence");
     expect(diagnostic?.explanation).toContain("could not be verified");
     expect(findings.some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(false);
   });
