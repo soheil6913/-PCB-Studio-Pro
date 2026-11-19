@@ -3,6 +3,7 @@ import {
   CONNECT_TOLERANCE,
   migrateProjectJson,
   measure,
+  transformLocalPoint,
   route45,
   runDesignRules,
   segmentDistance,
@@ -12,6 +13,7 @@ import {
   validateProjectJson,
   validateProjectJsonDetailed,
   validateSchematic,
+  viaToPadDistance,
 } from "./engineering";
 
 const board = { x: 0, y: 0, width: 300, height: 300, edgeClearance: 5 };
@@ -159,5 +161,42 @@ describe("engineering core", () => {
     const through = { id: "TH1", ref: "J1", x: 150, y: 150, footprintGeometry: { identifier: "TH", pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 10, height: 10, shape: "circle" as const, layer: "F.Cu" as const, layers: ["F.Cu", "B.Cu"] as ("F.Cu" | "B.Cu")[], drill: 2, plated: true }] } };
     const frontTrack = validatePcb({ ...empty, components: [through], tracks: [{ id: "front", from: { x: 140, y: 150 }, to: { x: 160, y: 150 }, width: 2, layer: "F.Cu" }] });
     expect(frontTrack.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
+  it("computes Via-to-Pad distance from exact rect, oval, and circle geometry", () => {
+    const via = { id: "v", x: 8, y: 0, drill: 2, diameter: 2, layers: ["F.Cu", "B.Cu"] as ["F.Cu", "B.Cu"] };
+    const rect = { id: "r", number: "1", position: { x: 0, y: 0 }, width: 10, height: 6, shape: "rect" as const, layer: "F.Cu" as const };
+    expect(viaToPadDistance(rect, via)).toBeCloseTo(2, 6);
+    const oval = { id: "o", number: "1", position: { x: 0, y: 5 }, width: 10, height: 4, shape: "oval" as const, layer: "F.Cu" as const };
+    expect(viaToPadDistance(oval, { ...via, x: 0, y: 10 })).toBeCloseTo(2, 6);
+    const circle = { id: "c", number: "1", position: { x: 0, y: 0 }, width: 10, height: 10, shape: "circle" as const, layer: "F.Cu" as const };
+    expect(viaToPadDistance(circle, { ...via, x: 7, y: 0 })).toBeCloseTo(1, 6);
+  });
+
+  it("changes Via-to-Pad clearance when pad shape and combined rotation change", () => {
+    const componentRotation = 90;
+    const padRotation = 45;
+    const worldPad = { id: "rot", number: "1", position: transformLocalPoint({ x: 20, y: 20 }, { x: 4, y: 0 }, componentRotation), width: 12, height: 2, shape: "rect" as const, layer: "F.Cu" as const, rotation: componentRotation + padRotation };
+    const via = { id: "vr", x: 20, y: 35, drill: 2, diameter: 2, layers: ["F.Cu", "B.Cu"] as ["F.Cu", "B.Cu"] };
+    const rotatedDistance = viaToPadDistance(worldPad, via);
+    const unrotatedDistance = viaToPadDistance({ ...worldPad, rotation: 0 }, via);
+    expect(rotatedDistance).not.toBeCloseTo(unrotatedDistance, 4);
+    const below = validatePcb({ ...empty, designRules: { ...rules, viaToPadClearance: rotatedDistance - 0.01 }, components: [{ id: "u", ref: "U1", x: 20, y: 20, rotation: componentRotation, footprintGeometry: { identifier: "FP", pads: [{ id: "rot", number: "1", position: { x: 4, y: 0 }, width: 12, height: 2, shape: "rect", layer: "F.Cu", rotation: padRotation }] } }], vias: [via] });
+    expect(below.some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(false);
+    const above = validatePcb({ ...empty, designRules: { ...rules, viaToPadClearance: rotatedDistance + 0.01 }, components: [{ id: "u", ref: "U1", x: 20, y: 20, rotation: componentRotation, footprintGeometry: { identifier: "FP", pads: [{ id: "rot", number: "1", position: { x: 4, y: 0 }, width: 12, height: 2, shape: "rect", layer: "F.Cu", rotation: padRotation }] } }], vias: [via] });
+    expect(above.some(finding => finding.ruleId === "PCB_VIA_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
+  it("rejects malformed JSON fields, duplicate IDs, invalid layers, and unknown keys", () => {
+    const checked = validateProjectJsonDetailed({ components: [{ id: "c", ref: "R1", x: 0, y: 0, unknownComponent: true }, { id: "c", ref: "R2", x: 0, y: 0 }], wires: [{ id: "w", from: null, to: [], net: 42, unknownWire: true }], tracks: [{ id: "t", from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, width: 0, layer: "Inner", net: null }], vias: [{ id: "v", x: 0, y: 0, drill: 1, layers: ["F.Cu"], unknownVia: true }], junctions: [{}], designRules: { viaToPadClearance: "1", unknownRule: 2 } });
+    expect(checked.ok).toBe(false);
+    expect(checked.errors.some(error => error.path.includes("components[0].unknownComponent"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("components[1].id"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("wires[0].from"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("wires[0].net"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("tracks[0].layer"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("vias[0].layers"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("junctions[0]"))).toBe(true);
+    expect(checked.errors.some(error => error.path.includes("designRules.unknownRule"))).toBe(true);
   });
 });
