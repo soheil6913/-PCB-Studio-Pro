@@ -216,6 +216,36 @@ describe("engineering core", () => {
     expect(touchingTrack.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
   });
 
+  it("checks rotated oval track clearance at the allowed, violating, and tangent boundaries", () => {
+    const oval = { id: "rot-oval", number: "1", position: { x: 0, y: 0 }, width: 10, height: 4, shape: "oval" as const, layer: "F.Cu" as const, rotation: 90 };
+    const component = { id: "u-rot", ref: "U1", x: 150, y: 150, footprintGeometry: { identifier: "FP", pads: [oval] } };
+    const route = (id: string, x: number, clearance: number) => validatePcb({ ...empty, components: [component], tracks: [{ id, from: { x, y: 144 }, to: { x, y: 156 }, width: 0.2, layer: "F.Cu" }], designRules: { ...rules, trackToPadClearance: clearance } });
+
+    // At 90 degrees the oval's horizontal semi-axis is 2; x=152.4 gives an exact 0.4 boundary gap.
+    expect(route("allowed", 152.4, 0.29).some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(false);
+    expect(route("violating", 152.4, 0.31).some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
+    // x=152 is tangent to the rotated oval; the track width makes this a clearance violation.
+    expect(route("tangent", 152, 0).some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
+  it("computes circle-to-rect distance for positive gap, tangency, overlap, and DRC thresholds", () => {
+    const rect = { id: "rect", number: "1", position: { x: 0, y: 0 }, width: 6, height: 4, shape: "rect" as const, layer: "F.Cu" as const };
+    const circle = (x: number) => ({ id: `circle-${x}`, number: "1", position: { x, y: 0 }, width: 4, height: 4, shape: "circle" as const, layer: "F.Cu" as const });
+    expect(padToPadDistance(circle(6), rect)).toBeCloseTo(1, 6);
+    expect(padToPadDistance(circle(5), rect)).toBe(0);
+    expect(padToPadDistance(circle(4), rect)).toBe(0);
+
+    const drc = (x: number, clearance: number) => validatePcb({ ...empty, components: [
+      { id: "rect-component", ref: "R1", x: 100, y: 100, footprintGeometry: { identifier: "RECT", pads: [rect] } },
+      { id: `circle-component-${x}`, ref: "C1", x: 100 + x, y: 100, footprintGeometry: { identifier: "CIRCLE", pads: [{ ...circle(0), position: { x: 0, y: 0 } }] } },
+    ], designRules: { ...rules, padToPadClearance: clearance } });
+    expect(drc(6, 0.99).some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(false);
+    expect(drc(6, 1.01).some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(true);
+    expect(drc(5, 0).some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(false);
+    expect(drc(5, 0.01).some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(true);
+    expect(drc(4, 0.01).some(finding => finding.ruleId === "PCB_PAD_TO_PAD_CLEARANCE")).toBe(true);
+  });
+
   it("changes Via-to-Pad clearance when pad shape and combined rotation change", () => {
     const componentRotation = 90;
     const padRotation = 45;
