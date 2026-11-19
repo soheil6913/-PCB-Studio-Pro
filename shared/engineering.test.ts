@@ -81,6 +81,16 @@ describe("engineering core", () => {
         },
       },
       {
+        id: "rotated-safe-rect",
+        ref: "R4",
+        x: 6.8,
+        y: 100,
+        footprintGeometry: {
+          identifier: "ROTATED-SAFE-RECT",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 4, height: 2, rotation: 45, layer: "F.Cu" as const }],
+        },
+      },
+      {
         id: "edge-oval",
         ref: "U1",
         x: 6.99,
@@ -108,6 +118,7 @@ describe("engineering core", () => {
     expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-oval", "1"]);
     expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-circle", "1"]);
     expect(edgeFindings.some(finding => finding.objectIds.includes("safe-rect"))).toBe(false);
+    expect(edgeFindings.some(finding => finding.objectIds.includes("rotated-safe-rect"))).toBe(false);
 
     const stricterRule = validatePcb({
       ...empty,
