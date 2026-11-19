@@ -58,6 +58,47 @@ describe("engineering core", () => {
     expect(findings.some(finding => finding.ruleId === "PCB_VIA_EDGE_CLEARANCE")).toBe(true);
   });
 
+  it("checks rectangular and rotated oval pad copper against board-edge clearance", () => {
+    const components = [
+      {
+        id: "edge-rect",
+        ref: "R1",
+        x: 4,
+        y: 40,
+        footprintGeometry: {
+          identifier: "EDGE-RECT",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, layer: "F.Cu" as const }],
+        },
+      },
+      {
+        id: "safe-rect",
+        ref: "R2",
+        x: 6,
+        y: 80,
+        footprintGeometry: {
+          identifier: "SAFE-RECT",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 2, height: 2, layer: "F.Cu" as const }],
+        },
+      },
+      {
+        id: "edge-oval",
+        ref: "U1",
+        x: 6.99,
+        y: 120,
+        footprintGeometry: {
+          identifier: "EDGE-OVAL",
+          pads: [{ id: "1", number: "1", position: { x: 0, y: 0 }, width: 10, height: 4, shape: "oval" as const, rotation: 90, layer: "F.Cu" as const }],
+        },
+      },
+    ];
+    const findings = validatePcb({ ...empty, components });
+    const edgeFindings = findings.filter(finding => finding.ruleId === "PCB_PAD_EDGE_CLEARANCE");
+    expect(edgeFindings).toHaveLength(2);
+    expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-rect", "1"]);
+    expect(edgeFindings.map(finding => finding.objectIds)).toContainEqual(["edge-oval", "1"]);
+    expect(edgeFindings.some(finding => finding.objectIds.includes("safe-rect"))).toBe(false);
+  });
+
   it("transforms footprint pads and evaluates track-to-pad and pad-to-pad clearance", () => {
     const findings = validatePcb({ ...empty, components: [{ id: "u1", ref: "U1", value: "IC", footprint: "FP", x: 100, y: 100, rotation: 90, footprintGeometry: { identifier: "FP", pads: [{ id: "1", number: "1", position: { x: 10, y: 0 }, width: 8, height: 8, layer: "F.Cu" }, { id: "2", number: "2", position: { x: 14, y: 0 }, width: 8, height: 8, layer: "F.Cu" }] } }], tracks: [{ id: "t1", from: { x: 90, y: 110 }, to: { x: 120, y: 110 }, width: 2, layer: "F.Cu" }] });
     expect(findings.some(finding => finding.ruleId === "PCB_TRACK_TO_PAD_CLEARANCE")).toBe(true);
