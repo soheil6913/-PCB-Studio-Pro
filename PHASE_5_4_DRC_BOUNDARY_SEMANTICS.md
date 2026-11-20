@@ -5,7 +5,8 @@
 - Repository: `soheil6913/-PCB-Studio-Pro`
 - Branch: `verification/phase5-4-drc-boundary-semantics-20261120`
 - Initial baseline: `ce4d8b9325d92c2efcb90c6deef56e1070650e43`
-- Final report-bearing commit: pending
+- Implementation commit: `ecc037868fc71bf181897eb694b01ec83e23c96d`
+- Final report-bearing commit: pending (documentation-only follow-up)
 - Scope: independent tests and documentation only; no production implementation was changed.
 - No main-branch edits, merge, rebase, cherry-pick, PR, or historical rewrite was performed.
 - Existing Phase 5.3 and Phase 5.3.8 files remain unchanged.
@@ -61,7 +62,7 @@ Commands run on the Phase 5.4 branch before report commit:
 - `git diff --check` — exit 0.
 - Git status before commit: branch `verification/phase5-4-drc-boundary-semantics-20261120`; only the new Phase 5.4 test was untracked; baseline HEAD matched exactly.
 
-Hosted GitHub Actions run: pending until final report-bearing commit is pushed. The existing Engineering workflow is configured for `verification/**` pushes and runs check, tests, and build; record exact run ID and URL below after completion.
+Hosted GitHub Actions implementation run: [Engineering verification #44656727768](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44656727768) — success on `ecc037868fc71bf181897eb694b01ec83e23c96d`; TypeScript check, automated tests, and production build all passed. This run verifies the exact code/test implementation; the final follow-up is documentation-only. The report-bearing head also triggers the same Engineering workflow; its run identity is recorded in the delivery summary.
 
 ## Known limitations and next steps
 
@@ -71,4 +72,4 @@ Hosted GitHub Actions run: pending until final report-bearing commit is pushed. 
 - Via-via clearance is checked regardless of declared via spans in current production code; whether non-overlapping via spans should be excluded is an unresolved applicability policy.
 - Same-net track exemptions and zero-clearance overlap/short semantics need explicit product decisions.
 - Axis-aligned pad-pair exact cases do not cover every shape pairing (for example oval/rounded shapes) under this Phase 5.4 matrix.
-- Final report-bearing SHA and hosted CI run evidence will be filled after the report commit and push.
+- The final report-bearing SHA is a documentation-only descendant of the CI-verified implementation commit. Its own hosted Actions run should be checked separately; it cannot be embedded in its own commit contents without creating another report-bearing commit.
