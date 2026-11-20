@@ -1456,6 +1456,36 @@ describe("Phase 5.3 independent geometry references", () => {
       }
     });
 
+    it("keeps narrow-axis separation when eccentric ellipse dimensions are very large", () => {
+      const first = {
+        ...pad("A", 1e143, 2000, "oval"),
+        position: { x: 0, y: 0 },
+      };
+      const second = {
+        ...pad("B", 1e143, 2000, "oval"),
+        position: { x: 0, y: 3 },
+      };
+      const result = padToPadDistanceDetailed(first, second);
+      expect(result.state).toBe("CONVERGED");
+      if (result.state === "CONVERGED") expect(result.distance).toBe(1);
+    });
+
+    it("recognizes common ellipse axes modulo a half-turn", () => {
+      const center = rotatePointIndependent({ x: 0, y: 3 }, 15);
+      const first = {
+        ...pad("A", 20_000, 2000, "oval", 15),
+        position: { x: 0, y: 0 },
+      };
+      const second = {
+        ...pad("B", 20_000, 2000, "oval", 195),
+        position: center,
+      };
+      const result = padToPadDistanceDetailed(first, second);
+      expect(result.state).toBe("CONVERGED");
+      if (result.state === "CONVERGED")
+        expect(result.distance).toBeCloseTo(1, 12);
+    });
+
     it("checks mixed rotated-ellipse and unrotated-rectangle distance with a bounded independent mesh", () => {
       const ellipseRotation = 30;
       const ellipseCenter = { x: 0, y: 6 };
