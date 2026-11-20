@@ -384,3 +384,217 @@ export function classifyDistanceInterval(
   if (interval.upper < required - uncertainty) return "VIOLATION";
   return "AMBIGUOUS";
 }
+
+const DEFAULT_RECTANGLE_ORACLE_SCALE = 1_000_000_000;
+
+export function quantizePointIndependent(
+  point: FloatPoint,
+  unitsPerWorldUnit = DEFAULT_RECTANGLE_ORACLE_SCALE
+): TickPoint {
+  if (
+    !Number.isFinite(point.x) ||
+    !Number.isFinite(point.y) ||
+    !Number.isSafeInteger(unitsPerWorldUnit) ||
+    unitsPerWorldUnit <= 0
+  )
+    throw new RangeError(
+      "point coordinates must be finite and quantization scale positive"
+    );
+  const roundedX = Math.round(point.x * unitsPerWorldUnit);
+  const roundedY = Math.round(point.y * unitsPerWorldUnit);
+  if (!Number.isSafeInteger(roundedX) || !Number.isSafeInteger(roundedY))
+    throw new RangeError("point exceeds the exact fixed-grid integer range");
+  return {
+    x: BigInt(roundedX),
+    y: BigInt(roundedY),
+  };
+}
+
+export function rotatedRectangleCornersFixed(
+  center: FloatPoint,
+  width: number,
+  height: number,
+  rotationDegrees: number,
+  unitsPerWorldUnit = DEFAULT_RECTANGLE_ORACLE_SCALE
+): TickPoint[] {
+  if (
+    !Number.isFinite(center.x) ||
+    !Number.isFinite(center.y) ||
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= 0 ||
+    height <= 0 ||
+    !Number.isFinite(rotationDegrees)
+  )
+    throw new RangeError("rectangle geometry must be finite and positive");
+  const localCorners = [
+    { x: -width / 2, y: -height / 2 },
+    { x: width / 2, y: -height / 2 },
+    { x: width / 2, y: height / 2 },
+    { x: -width / 2, y: height / 2 },
+  ];
+  return localCorners.map(local => {
+    const rotated = rotatePointIndependent(local, rotationDegrees);
+    return quantizePointIndependent(
+      { x: center.x + rotated.x, y: center.y + rotated.y },
+      unitsPerWorldUnit
+    );
+  });
+}
+
+function pointInConvexPolygonExact(point: TickPoint, polygon: TickPoint[]) {
+  if (polygon.length < 3) return false;
+  let sign = 0;
+  for (let i = 0; i < polygon.length; i += 1) {
+    const first = polygon[i]!;
+    const second = polygon[(i + 1) % polygon.length]!;
+    const side = cross(first, second, point);
+    if (
+      side === 0n &&
+      between(point.x, first.x, second.x) &&
+      between(point.y, first.y, second.y)
+    )
+      return true;
+    if (side === 0n) continue;
+    const currentSign = side > 0n ? 1 : -1;
+    if (sign !== 0 && sign !== currentSign) return false;
+    sign = currentSign;
+  }
+  return sign !== 0;
+}
+
+export function pointToConvexPolygonDistanceSquaredExact(
+  point: TickPoint,
+  polygon: TickPoint[]
+): ExactSquaredDistance {
+  if (polygon.length < 3)
+    throw new RangeError("polygon must have at least three vertices");
+  if (pointInConvexPolygonExact(point, polygon))
+    return { numerator: 0n, denominator: 1n };
+  const distances = polygon.map((first, i) =>
+    pointSegmentDistanceSquaredExact(
+      point,
+      first,
+      polygon[(i + 1) % polygon.length]!
+    )
+  );
+  return distances.reduce((best, candidate) =>
+    compareFractions(candidate, best) < 0 ? candidate : best
+  );
+}
+
+export function segmentToConvexPolygonDistanceSquaredExact(
+  start: TickPoint,
+  end: TickPoint,
+  polygon: TickPoint[]
+): ExactSquaredDistance {
+  if (polygon.length < 3)
+    throw new RangeError("polygon must have at least three vertices");
+  if (
+    pointInConvexPolygonExact(start, polygon) ||
+    pointInConvexPolygonExact(end, polygon)
+  )
+    return { numerator: 0n, denominator: 1n };
+  let best: ExactSquaredDistance | undefined;
+  for (let i = 0; i < polygon.length; i += 1) {
+    const first = polygon[i]!;
+    const second = polygon[(i + 1) % polygon.length]!;
+    if (segmentsIntersectExact(start, end, first, second))
+      return { numerator: 0n, denominator: 1n };
+    const candidate = segmentDistanceSquaredExact(start, end, first, second);
+    if (!best || compareFractions(candidate, best) < 0) best = candidate;
+  }
+  return best ?? { numerator: 0n, denominator: 1n };
+}
+
+function boundedFixedDistanceInterval(
+  squared: ExactSquaredDistance,
+  unitsPerWorldUnit: number,
+  coordinateScale: number,
+  method: string
+): DistanceInterval {
+  const estimate = distanceApprox(squared) / unitsPerWorldUnit;
+  const errorBound =
+    2 / unitsPerWorldUnit +
+    Number.EPSILON * Math.max(1, coordinateScale, estimate) * 128;
+  return {
+    lower: Math.max(0, estimate - errorBound),
+    upper: estimate + errorBound,
+    errorBound,
+    method,
+  };
+}
+
+export function pointToRotatedRectangleDistanceInterval(
+  point: FloatPoint,
+  center: FloatPoint,
+  width: number,
+  height: number,
+  rotationDegrees: number,
+  unitsPerWorldUnit = DEFAULT_RECTANGLE_ORACLE_SCALE
+): DistanceInterval {
+  const corners = rotatedRectangleCornersFixed(
+    center,
+    width,
+    height,
+    rotationDegrees,
+    unitsPerWorldUnit
+  );
+  const fixedPoint = quantizePointIndependent(point, unitsPerWorldUnit);
+  const squared = pointToConvexPolygonDistanceSquaredExact(fixedPoint, corners);
+  const scale = Math.max(
+    Math.abs(point.x),
+    Math.abs(point.y),
+    Math.abs(center.x) + width + height,
+    Math.abs(center.y) + width + height,
+    width,
+    height
+  );
+  return boundedFixedDistanceInterval(
+    squared,
+    unitsPerWorldUnit,
+    scale,
+    "independently transformed rectangle corners; exact BigInt point/polygon distance; fixed-grid and binary64 error envelope"
+  );
+}
+
+export function segmentToRotatedRectangleDistanceInterval(
+  start: FloatPoint,
+  end: FloatPoint,
+  center: FloatPoint,
+  width: number,
+  height: number,
+  rotationDegrees: number,
+  unitsPerWorldUnit = DEFAULT_RECTANGLE_ORACLE_SCALE
+): DistanceInterval {
+  const corners = rotatedRectangleCornersFixed(
+    center,
+    width,
+    height,
+    rotationDegrees,
+    unitsPerWorldUnit
+  );
+  const fixedStart = quantizePointIndependent(start, unitsPerWorldUnit);
+  const fixedEnd = quantizePointIndependent(end, unitsPerWorldUnit);
+  const squared = segmentToConvexPolygonDistanceSquaredExact(
+    fixedStart,
+    fixedEnd,
+    corners
+  );
+  const scale = Math.max(
+    Math.abs(start.x),
+    Math.abs(start.y),
+    Math.abs(end.x),
+    Math.abs(end.y),
+    Math.abs(center.x) + width + height,
+    Math.abs(center.y) + width + height,
+    width,
+    height
+  );
+  return boundedFixedDistanceInterval(
+    squared,
+    unitsPerWorldUnit,
+    scale,
+    "independently transformed rectangle corners; exact BigInt segment/polygon distance; fixed-grid and binary64 error envelope"
+  );
+}
