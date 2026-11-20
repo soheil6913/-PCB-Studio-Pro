@@ -14,7 +14,7 @@ No universal or complete DRC correctness claim is made. The Phase 5.4 and Phase 
 - Baseline verified before branch creation; new branch was created directly at this exact commit.
 - Local `main` at preflight: `de7497a675af7c6212bbc4751fce098c1f414e8d`; no `main` ref or worktree changes were made.
 - No merge, rebase, cherry-pick, PR, or history rewrite was performed.
-- Final SHA: to be filled with the report-bearing commit after validation and push; this report cannot contain its own commit SHA.
+- Initial implementation/report SHA: `135499bb4b087097bcc65731f2d63a4bffe4ae8b`. The final report-bearing SHA is recorded in the delivery summary; a report cannot contain its own commit SHA.
 - Production implementation file `shared/engineering.ts` is unchanged.
 
 ## Files changed
@@ -144,7 +144,7 @@ After adding the Phase 5.5 test file:
 | `git diff --check` | Exit 0 before report addition; must be rerun on final diff/commit. |
 | Git status before report finalization | On Phase 5.5 branch; only new Phase 5.5 test untracked at the time of check; production file unchanged. |
 
-GitHub Actions on the final report-bearing commit: **PENDING**. The isolated Phase 5.5 branch must be pushed and its Engineering verification run awaited; record exact run ID, URL, result, final SHA, and final status after the run completes. No CI success is claimed yet.
+GitHub Actions Engineering verification [run #44670040231](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44670040231) passed on implementation/report commit `135499bb4b087097bcc65731f2d63a4bffe4ae8b`. The workflow's TypeScript check, automated tests, and production build all succeeded. The final report-bearing revision is a documentation-only follow-up; its exact-head CI run is reported in the delivery summary (the report cannot embed its own future run identity without another commit).
 
 ## Technical limitations and untested combinations
 
