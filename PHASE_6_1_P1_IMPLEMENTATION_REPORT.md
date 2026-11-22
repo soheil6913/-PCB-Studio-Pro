@@ -2,14 +2,17 @@
 
 ## Status
 
-**Implementation and hosted verification passed on an isolated branch; independent review completed; merge remains gated.**
+**Phase 6.1 P1 implementation and verification are complete on the isolated feature branch; merge remains gated.**
 
 - Repository: `soheil6913/-PCB-Studio-Pro`
 - Base branch: `main`
-- Exact base SHA: `a98384bbfc3296947b90f5254a03a77b11fdc8a9`
+- Verified main baseline: `a98384bbfc3296947b90f5254a03a77b11fdc8a9`
 - Implementation branch: `fix/phase6-1-p1-explicit-v2-dispatch-20261122`
+- Branch HEAD at the verification/documentation boundary: `9bcb744d188787963022436a6f2b99b345a8a70e`
+- Latest commit containing executable implementation changes: `44dd8b9cfaf9a4f9c6c8b9cf90c41fd6bea2c53d`
+- Commit `9bcb744d188787963022436a6f2b99b345a8a70e` contains documentation/report changes only; it did not modify executable code or tests.
 - No changes were made to `main`.
-- No merge was performed.
+- No merge, release, or tag was created.
 
 ## Implemented changes
 
@@ -26,7 +29,7 @@ All three accepted legacy cases intentionally route to the same frozen V2 PCB ge
 
 ### 2. Guarded public PCB boundary
 
-The former PCB evaluator body is now an internal V2 implementation. The exported `validatePcb` function is a guarded compatibility boundary that:
+The exported `validatePcb` function is a guarded compatibility boundary that:
 
 - accepts only recognized project-root fields;
 - rejects unsupported or malformed explicit schema versions;
@@ -36,11 +39,11 @@ The former PCB evaluator body is now an internal V2 implementation. The exported
 
 The internal V2 geometry implementation, projected-2D all-Via-pairs formula, `diameter ?? drill * 2` fallback, comparator, pair iteration order, and finding identity construction were not intentionally changed.
 
-### 3. Regression coverage added
+### 3. Regression coverage
 
 The compatibility suite includes:
 
-- all Via geometry goldens through aggregate `runDesignRules`, not only `validatePcb`;
+- Via geometry goldens through aggregate `runDesignRules`, not only `validatePcb`;
 - separate versionless, v1, and v2 compatibility paths;
 - malformed and unsupported versions: 0, negative, fractional, 3, 99, string, and null;
 - direct-helper rejection for unsupported versions;
@@ -48,77 +51,32 @@ The compatibility suite includes:
 - nested ViaSpan-like field rejection;
 - exact golden identity comparison for `id`, `ruleId`, `severity`, and ordered `objectIds`.
 
-## Independent review
+## Independent audit conclusion
 
-The PR diff was independently reviewed against the declared compatibility contract and current `main` baseline.
+The independent review covered `validatePcbRootBoundary`, `validatePcb`, `resolveLegacyDrcSourceVersion`, `runDesignRules`, `evaluatePcbV2`, `validateProjectJsonDetailed`, and the compatibility fixtures against the declared contract and the `main` baseline.
 
-- The root-field allowlist matches the existing full-project validator's root allowlist.
-- The new public helper guard rejects unknown root metadata and unsupported explicit schema versions before entering the legacy V2 evaluator.
-- The evaluator body was moved behind the guard without changing its geometry logic.
-- The aggregate DRC path validates the complete project before explicit source-version dispatch.
-- The PR changes are confined to the implementation, compatibility tests, and this report.
+Verified findings:
 
-No correctness defect requiring a code change was identified in this review pass. This is not a formal proof of all geometry behavior; the golden and automated test suite remain the executable regression evidence.
+- unsupported and malformed schema versions fail closed;
+- unknown root and nested metadata are rejected;
+- direct PCB validation and aggregate `runDesignRules` retain their documented invalid-input behavior;
+- versionless, schema-v1, and schema-v2 inputs dispatch explicitly to the frozen V2 evaluator without import migration;
+- Via diameter fallback remains `diameter ?? drill * 2`;
+- projected-2D Via-pair iteration order, comparator behavior, object ordering, and finding identities remain covered by goldens;
+- aggregate DRC paths are tested in addition to direct PCB-helper paths;
+- no migration behavior or unrelated workspace behavior was changed.
 
-## Hosted validation evidence
+No confirmed P1 defect was found in this audit. This is not a formal proof of all possible geometry behavior; the executable regression suite is the verification evidence. Phase 6.1 P2 was not started.
 
-GitHub Actions **Engineering verification**, run **#67** (run ID `44985555299`), completed with conclusion **success** on implementation/report commit `8e62bd98d0bb578158ecccefc3fd3b500c33dd81`.
+## Verification evidence by commit
 
-The `verify` job completed all of these steps successfully:
+### Local verification — executable implementation commit `44dd8b9cfaf9a4f9c6c8b9cf90c41fd6bea2c53d`
 
-- dependency installation (`pnpm install --frozen-lockfile`);
-- TypeScript check (`pnpm check`);
-- full automated test suite (`pnpm test`);
-- production build (`pnpm build`).
-
-Run: https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44985555299
-
-The report is being synchronized after that successful run; this report-only follow-up does not alter production or test code. Its own commit should receive a fresh hosted verification run before the PR is considered ready for merge.
-
-## Files changed in PR #3
-
-- `shared/engineering.ts`
-- `shared/engineering.v2-compatibility.test.ts`
-- `PHASE_6_1_P1_IMPLEMENTATION_REPORT.md`
-
-## Key implementation commits
-
-- `81c50b4b65776cdc9d319b53e0933fa3f0c3424e` — guarded boundary and initial dispatch.
-- `f3ed3c12e6555fca825d3a088d4f3caa8ce69b4f` — dispatch and boundary regression tests.
-- `06ed36da7936670d713cd497b2283eec343f84ae` — exhaustive fail-closed dispatch.
-- `8e62bd98d0bb578158ecccefc3fd3b500c33dd81` — report revision preceding this evidence synchronization.
-
-The implementation branch remains isolated from `main`. Draft PR: https://github.com/soheil6913/-PCB-Studio-Pro/pull/3. No merge was performed.
-
-## Next gate
-
-Confirm the fresh CI run for this report synchronization, then complete the PR readiness review. Do not start Phase 6.1 P2 or merge this PR until the final gate is explicitly cleared.
-
-## Final independent verification addendum
-
-### Exact repository state
-
-- Final branch HEAD: `44dd8b9cfaf9a4f9c6c8b9cf90c41fd6bea2c53d`
-- Parent implementation commit: `8e62bd98d0bb578158ecccefc3fd3b500c33dd81`
-- Main baseline remains: `a98384bbfc3296947b90f5254a03a77b11fdc8a9`
-- Worktree was clean before and after verification.
-
-### Current-head hosted CI
-
-The current HEAD was independently matched to both the push and pull-request runs:
-
-- Push run: [45063801293](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/45063801293) — `completed`, `success`.
-- Pull-request run: [45063955588](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/45063955588) — `completed`, `success`.
-
-The PR run's `verify` job completed successfully through every substantive step: Checkout, Setup pnpm, Setup Node.js, frozen-lockfile dependency installation, TypeScript check, automated tests, and production build. Cleanup and complete-job steps also completed successfully.
-
-### Independent local verification
-
-Executed on the exact branch HEAD:
+Executed locally on the implementation state before the documentation-only commit:
 
 ```text
 pnpm exec vitest run shared/engineering.v2-compatibility.test.ts
-1 file passed; 46 tests passed
+1 test file passed; 46 tests passed
 
 pnpm check
 passed
@@ -130,23 +88,41 @@ pnpm build
 passed
 ```
 
-The build emitted the existing Vite warning about `/api/platform/config.js` lacking `type="module"`; it did not fail the build.
+The local production build emitted the existing non-fatal Vite warning about `/api/platform/config.js` lacking `type="module"`; the build succeeded.
 
-### Adversarial audit conclusion
+### GitHub Actions — documentation/report commit `9bcb744d188787963022436a6f2b99b345a8a70e`
 
-The independently inspected `validatePcbRootBoundary`, `validatePcb`, `resolveLegacyDrcSourceVersion`, `runDesignRules`, `evaluatePcbV2`, `validateProjectJsonDetailed`, and compatibility fixtures show no confirmed P1 defect.
+The successful pull-request CI run checked out exactly SHA `9bcb744d188787963022436a6f2b99b345a8a70e`:
 
-Specifically verified:
+- Run: [45065158399](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/45065158399)
+- Event: `pull_request`
+- Status: `completed`
+- Conclusion: `success`
+- Job: `verify`
 
-- unsupported and malformed schema versions fail closed;
-- unknown root and nested metadata are rejected;
-- `validatePcb` and aggregate `runDesignRules` retain distinct, documented invalid-input identities;
-- explicit versionless, schema-v1, and schema-v2 inputs dispatch to the frozen V2 evaluator without import migration;
-- Via diameter fallback remains `diameter ?? drill * 2`;
-- projected-2D Via-pair iteration order, comparator behavior, object ordering, and finding identities remain covered by goldens;
-- aggregate DRC paths are tested in addition to direct PCB-helper paths;
-- no migration behavior or unrelated workspace behavior was changed.
+The job successfully completed dependency installation with `pnpm install --frozen-lockfile`, TypeScript check, automated tests, and production build. The report-only commit did not change executable code or tests.
 
-No defect was found that justifies a production-code or test-code correction in this audit pass. Phase 6.1 P2 was not started.
+## Pull request and repository safety
 
-The PR remains a draft and is suitable for independent review of the three-file P1 diff. It is not merged, and `main` remains unchanged.
+- Pull request: [#3](https://github.com/soheil6913/-PCB-Studio-Pro/pull/3)
+- PR state at verification: **Open / Draft**
+- PR base: `main`
+- PR head at verification: `9bcb744d188787963022436a6f2b99b345a8a70e`
+- `main` remained at `a98384bbfc3296947b90f5254a03a77b11fdc8a9`.
+- No merge was performed.
+- No release or tag was created.
+- No Phase 6.1 P2 work was started.
+
+The PR diff at the verified boundary contained only:
+
+- `shared/engineering.ts`
+- `shared/engineering.v2-compatibility.test.ts`
+- `PHASE_6_1_P1_IMPLEMENTATION_REPORT.md`
+
+The final documentation synchronization commit requested after this report update is documentation-only; it must not be interpreted as a change to executable code or tests.
+
+## Remaining human review items
+
+Human reviewers should inspect the three-file PR diff, the schema-dispatch boundary, the exact V2 Via-pair identity goldens, and the known product limitations. No IPC/manufacturing sign-off, Gerber/KiCad export, verified external footprint library, 3D implementation, electrical simulation, thermal simulation, or impedance simulation is claimed by this report.
+
+Merge remains disabled pending explicit human approval.
