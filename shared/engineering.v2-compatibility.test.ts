@@ -140,3 +140,68 @@ describe("schema-v2 validation and migration compatibility goldens", () => {
     ]);
   });
 });
+
+
+describe("schema-v2 aggregate dispatch and guarded PCB boundary", () => {
+  it.each(v2ViaCompatibilityFixtures)("preserves aggregate DRC goldens: $name", fixture => {
+    expect(snapshot(runDesignRules(fixture.project))).toEqual(fixture.expectedFindings);
+  });
+
+  it("keeps explicit v1, explicit v2, and versionless inputs separately accepted but geometrically compatible", () => {
+    const v2 = v2ViaCompatibilityFixtures.find(fixture => fixture.name === "both explicit diameters are used")!.project;
+    const v1 = { ...v2, schemaVersion: 1 } satisfies EngineeringProject;
+    const versionless = { ...v2 } as EngineeringProject & { schemaVersion?: number };
+    delete versionless.schemaVersion;
+
+    const v2Findings = snapshot(runDesignRules(v2));
+    expect(snapshot(runDesignRules(v1))).toEqual(v2Findings);
+    expect(snapshot(runDesignRules(versionless))).toEqual(v2Findings);
+    expect(validateProjectJsonDetailed(versionless).ok).toBe(true);
+  });
+
+  it.each([0, -1, 1.5, 3, 99, "2", null])("fails closed for unsupported or malformed schemaVersion %s", schemaVersion => {
+    const valid = v2ViaCompatibilityFixtures[0].project;
+    const project = { ...valid, schemaVersion } as unknown as EngineeringProject;
+
+    expect(validateProjectJsonDetailed(project).ok).toBe(false);
+    expect(migrateProjectJson(project)).toBeNull();
+    expect(snapshot(runDesignRules(project))).toEqual([
+      { id: "PROJECT_INVALID:", ruleId: "PROJECT_INVALID", severity: "Error", objectIds: [] },
+    ]);
+    expect(snapshot(validatePcb(project))).toEqual([
+      { id: "PCB_INVALID_INPUT:", ruleId: "PCB_INVALID_INPUT", severity: "Error", objectIds: [] },
+    ]);
+  });
+
+  it.each(["viaSpan", "stackup", "processEvidence", "ledger", "graph"])(
+    "rejects unknown root model metadata (%s) before either DRC entry point",
+    field => {
+      const valid = v2ViaCompatibilityFixtures[0].project;
+      const project = { ...valid, [field]: {} } as unknown as EngineeringProject;
+
+      expect(validateProjectJsonDetailed(project).ok).toBe(false);
+      expect(snapshot(runDesignRules(project))).toEqual([
+        { id: "PROJECT_INVALID:", ruleId: "PROJECT_INVALID", severity: "Error", objectIds: [] },
+      ]);
+      expect(snapshot(validatePcb(project))).toEqual([
+        { id: "PCB_INVALID_INPUT:", ruleId: "PCB_INVALID_INPUT", severity: "Error", objectIds: [] },
+      ]);
+    },
+  );
+
+  it("rejects ViaSpan-like nested metadata without interpreting it as a version selector", () => {
+    const valid = v2ViaCompatibilityFixtures[0].project;
+    const project = {
+      ...valid,
+      vias: valid.vias.map((via, index) => index === 0 ? { ...via, viaSpan: ["L1", "L2"] } : via),
+    } as unknown as EngineeringProject;
+
+    expect(validateProjectJsonDetailed(project).ok).toBe(false);
+    expect(snapshot(runDesignRules(project))).toEqual([
+      { id: "PROJECT_INVALID:", ruleId: "PROJECT_INVALID", severity: "Error", objectIds: [] },
+    ]);
+    expect(snapshot(validatePcb(project))).toEqual([
+      { id: "PCB_INVALID_INPUT:", ruleId: "PCB_INVALID_INPUT", severity: "Error", objectIds: [] },
+    ]);
+  });
+});

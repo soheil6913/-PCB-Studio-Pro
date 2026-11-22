@@ -283,7 +283,7 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
   return findings;
 }
 
-export function validatePcb(project: Pick<EngineeringProject, "components" | "tracks" | "vias"> & Partial<Pick<EngineeringProject, "board" | "designRules">>, options: GeometryOptions = {}): DrcResult[] {
+function evaluatePcbV2(project: Pick<EngineeringProject, "components" | "tracks" | "vias"> & Partial<Pick<EngineeringProject, "board" | "designRules">>, options: GeometryOptions = {}): DrcResult[] {
   // Stable public-boundary diagnostic for malformed PCB-only runtime input.
   const candidate = project as unknown;
   const validationInput = candidate && typeof candidate === "object" && !Array.isArray(candidate)
@@ -322,7 +322,75 @@ export function validatePcb(project: Pick<EngineeringProject, "components" | "tr
   return findings;
 }
 
-export function runDesignRules(project: EngineeringProject) { const validation = validateProjectJsonDetailed(project); if (!validation.ok) return [result("PROJECT_INVALID", "Error", [], `Project data is invalid at ${validation.errors[0]?.path ?? "$"}.`, validation.errors[0]?.message ?? "Repair the project data before running DRC.")]; return [...validateSchematic(project), ...validatePcb(project)]; }
+const PCB_PROJECT_ROOT_FIELDS = ["schemaVersion", "projectName", "revision", "updatedAt", "grid", "activeLayer", "components", "wires", "tracks", "vias", "board", "designRules", "junctions"] as const;
+
+function validatePcbRootBoundary(value: unknown): ValidationError[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return [{ path: "$", message: "project must be a non-null object" }];
+  }
+  const errors: ValidationError[] = [];
+  unknownFields(value, PCB_PROJECT_ROOT_FIELDS, "$", errors);
+  const schemaVersion = (value as { schemaVersion?: unknown }).schemaVersion;
+  if (schemaVersion !== undefined && (
+    typeof schemaVersion !== "number" ||
+    !Number.isInteger(schemaVersion) ||
+    schemaVersion < 1 ||
+    schemaVersion > CURRENT_PROJECT_VERSION
+  )) {
+    errors.push({ path: "schemaVersion", message: `must be an integer from 1 to ${CURRENT_PROJECT_VERSION}` });
+  }
+  return errors;
+}
+
+/**
+ * Public PCB-only compatibility boundary. It accepts only known project-root
+ * fields and supported legacy schema versions; model selection is never
+ * inferred from arbitrary metadata. The geometry implementation remains V2.
+ */
+export function validatePcb(
+  project: Pick<EngineeringProject, "components" | "tracks" | "vias"> & Partial<Pick<EngineeringProject, "board" | "designRules">>,
+  options: GeometryOptions = {},
+): DrcResult[] {
+  const boundaryErrors = validatePcbRootBoundary(project);
+  if (boundaryErrors.length > 0) {
+    const first = boundaryErrors[0];
+    return [result("PCB_INVALID_INPUT", "Error", [], `PCB input is invalid at ${first.path}.`, first.message)];
+  }
+  return evaluatePcbV2(project, options);
+}
+
+type LegacyDrcSourceVersion = "versionless" | "schema-v1" | "schema-v2";
+
+function resolveLegacyDrcSourceVersion(schemaVersion: unknown): LegacyDrcSourceVersion | null {
+  if (schemaVersion === undefined) return "versionless";
+  if (schemaVersion === 1) return "schema-v1";
+  if (schemaVersion === 2) return "schema-v2";
+  return null;
+}
+
+export function runDesignRules(project: EngineeringProject) {
+  const validation = validateProjectJsonDetailed(project);
+  if (!validation.ok) return [result("PROJECT_INVALID", "Error", [], `Project data is invalid at ${validation.errors[0]?.path ?? "$"}.`, validation.errors[0]?.message ?? "Repair the project data before running DRC.")];
+
+  // Resolve only from the persisted version field. All accepted legacy source
+  // states intentionally retain the exact same frozen V2 evaluator contract.
+  const sourceVersion = resolveLegacyDrcSourceVersion(project.schemaVersion);
+  if (sourceVersion === null) {
+    return [result("PROJECT_INVALID", "Error", [], "Project data has an unsupported schema version.", "Repair the project data before running DRC.")];
+  }
+
+  let pcbFindings: DrcResult[];
+  switch (sourceVersion) {
+    case "versionless":
+    case "schema-v1":
+    case "schema-v2":
+      pcbFindings = evaluatePcbV2(project);
+      break;
+    default:
+      return [result("PROJECT_INVALID", "Error", [], "Project data has an unsupported schema version.", "Repair the project data before running DRC.")];
+  }
+  return [...validateSchematic(project), ...pcbFindings];
+}
 
 function uniqueIds(items: unknown[], path: string, errors: ValidationError[]) { const seen = new Set<string>(); items.forEach((item, index) => { if (!item || typeof item !== "object" || typeof (item as { id?: unknown }).id !== "string" || !(item as { id: string }).id) errors.push({ path: `${path}[${index}].id`, message: "must be a non-empty string" }); else if (seen.has((item as { id: string }).id)) errors.push({ path: `${path}[${index}].id`, message: "must be unique" }); else seen.add((item as { id: string }).id); }); }
 function validateCoordinates(value: unknown, path: string, errors: ValidationError[]) { if (!validPoint(value)) errors.push({ path, message: "must contain finite numeric x and y" }); }
