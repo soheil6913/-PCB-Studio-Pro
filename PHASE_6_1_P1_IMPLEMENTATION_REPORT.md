@@ -65,10 +65,12 @@ The next gate is to run at minimum:
 
 Any compile/test failure must be corrected on this branch before the P1 implementation is considered verified. No P2 work is authorized by this report.
 
-## Commit trail
+## Key implementation commits
 
 - `81c50b4b65776cdc9d319b53e0933fa3f0c3424e` — guarded boundary and initial dispatch.
 - `f3ed3c12e6555fca825d3a088d4f3caa8ce69b4f` — dispatch and boundary regression tests.
 - `06ed36da7936670d713cd497b2283eec343f84ae` — exhaustive fail-closed dispatch.
+
+Additional documentation and temporary CI-workflow cleanup commits are visible in the PR history; they do not alter the final production/test file set listed above.
 
 The implementation branch is isolated from `main`. Draft PR: https://github.com/soheil6913/-PCB-Studio-Pro/pull/3. No merge was performed.
