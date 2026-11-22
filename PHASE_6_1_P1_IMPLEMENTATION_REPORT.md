@@ -52,11 +52,10 @@ The compatibility suite now includes:
 
 - `shared/engineering.ts`
 - `shared/engineering.v2-compatibility.test.ts`
-- `.github/workflows/phase6-1-p1.yml` — PR verification workflow for targeted tests, TypeScript check, and the full suite.
 
 ## Validation status and limitations
 
-The test cases have been added but **have not yet been executed** in this environment. A local clone attempt could not resolve `github.com` because network DNS access is unavailable. A dedicated GitHub Actions workflow was added to the PR to run the targeted compatibility tests, TypeScript check, and full test suite. No passing test, type-check, or build result is claimed until that workflow reports success.
+The test cases have been added but **have not yet been executed** in this environment. A local clone attempt could not resolve `github.com` because network DNS access is unavailable. A PR-local workflow was briefly evaluated but removed because GitHub does not run a newly introduced pull-request workflow until that workflow exists on the base branch; merging merely to unlock tests would violate the verification gate. No passing test, type-check, or build result is claimed.
 
 The next gate is to run at minimum:
 
