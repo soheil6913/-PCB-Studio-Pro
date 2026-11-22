@@ -52,10 +52,11 @@ The compatibility suite now includes:
 
 - `shared/engineering.ts`
 - `shared/engineering.v2-compatibility.test.ts`
+- `.github/workflows/phase6-1-p1.yml` — PR verification workflow for targeted tests, TypeScript check, and the full suite.
 
 ## Validation status and limitations
 
-The test cases have been added but **have not yet been executed** in this environment. A local clone attempt could not resolve `github.com` because network DNS access is unavailable. No passing test, type-check, or build result is claimed in this report.
+The test cases have been added but **have not yet been executed** in this environment. A local clone attempt could not resolve `github.com` because network DNS access is unavailable. A dedicated GitHub Actions workflow was added to the PR to run the targeted compatibility tests, TypeScript check, and full test suite. No passing test, type-check, or build result is claimed until that workflow reports success.
 
 The next gate is to run at minimum:
 
@@ -71,4 +72,4 @@ Any compile/test failure must be corrected on this branch before the P1 implemen
 - `f3ed3c12e6555fca825d3a088d4f3caa8ce69b4f` — dispatch and boundary regression tests.
 - `06ed36da7936670d713cd497b2283eec343f84ae` — exhaustive fail-closed dispatch.
 
-The implementation branch is isolated from `main`. No merge was performed.
+The implementation branch is isolated from `main`. Draft PR: https://github.com/soheil6913/-PCB-Studio-Pro/pull/3. No merge was performed.
