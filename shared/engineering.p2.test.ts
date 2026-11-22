@@ -3,6 +3,7 @@ import {
   migrateProjectJson,
   runDesignRules,
   validateSchematic,
+  validateProjectJsonDetailed,
 } from "./engineering";
 
 describe("Phase 6.1 P2 validation remediations", () => {
@@ -17,6 +18,24 @@ describe("Phase 6.1 P2 validation remediations", () => {
     expect(migrateProjectJson({ components: [], wires: [], tracks: [], vias: [], grid: "20" })).toBeNull();
     expect(migrateProjectJson({ components: [], wires: [], tracks: [], vias: [], grid: 0 })).toBeNull();
     expect(migrateProjectJson({ components: [], wires: [], tracks: [], vias: [], grid: 12 })).toMatchObject({ grid: 12 });
+  });
+
+  it("treats an explicitly present undefined grid as invalid in both validation paths", () => {
+    const base = { components: [], wires: [], tracks: [], vias: [] };
+    const absent = validateProjectJsonDetailed(base);
+    expect(absent.ok).toBe(true);
+    expect(migrateProjectJson(base)).toMatchObject({ grid: 20 });
+
+    const invalidValues: unknown[] = [undefined, null, 0, -1, "20", Number.NaN, Number.POSITIVE_INFINITY];
+    for (const grid of invalidValues) {
+      const input = { ...base, grid };
+      expect(validateProjectJsonDetailed(input).errors.some(error => error.path === "grid")).toBe(true);
+      expect(migrateProjectJson(input)).toBeNull();
+    }
+
+    const valid = { ...base, grid: 12.5 };
+    expect(validateProjectJsonDetailed(valid)).toEqual({ ok: true, errors: [] });
+    expect(migrateProjectJson(valid)).toMatchObject({ grid: 12.5 });
   });
 
   it("returns one stable invalid-input finding instead of throwing for malformed direct schematic calls", () => {
