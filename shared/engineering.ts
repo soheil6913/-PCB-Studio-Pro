@@ -386,6 +386,8 @@ export function runDesignRules(project: EngineeringProject) {
     case "schema-v2":
       pcbFindings = evaluatePcbV2(project);
       break;
+    default:
+      return [result("PROJECT_INVALID", "Error", [], "Project data has an unsupported schema version.", "Repair the project data before running DRC.")];
   }
   return [...validateSchematic(project), ...pcbFindings];
 }
