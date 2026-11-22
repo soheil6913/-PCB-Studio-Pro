@@ -93,3 +93,60 @@ The implementation branch remains isolated from `main`. Draft PR: https://github
 ## Next gate
 
 Confirm the fresh CI run for this report synchronization, then complete the PR readiness review. Do not start Phase 6.1 P2 or merge this PR until the final gate is explicitly cleared.
+
+## Final independent verification addendum
+
+### Exact repository state
+
+- Final branch HEAD: `44dd8b9cfaf9a4f9c6c8b9cf90c41fd6bea2c53d`
+- Parent implementation commit: `8e62bd98d0bb578158ecccefc3fd3b500c33dd81`
+- Main baseline remains: `a98384bbfc3296947b90f5254a03a77b11fdc8a9`
+- Worktree was clean before and after verification.
+
+### Current-head hosted CI
+
+The current HEAD was independently matched to both the push and pull-request runs:
+
+- Push run: [45063801293](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/45063801293) — `completed`, `success`.
+- Pull-request run: [45063955588](https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/45063955588) — `completed`, `success`.
+
+The PR run's `verify` job completed successfully through every substantive step: Checkout, Setup pnpm, Setup Node.js, frozen-lockfile dependency installation, TypeScript check, automated tests, and production build. Cleanup and complete-job steps also completed successfully.
+
+### Independent local verification
+
+Executed on the exact branch HEAD:
+
+```text
+pnpm exec vitest run shared/engineering.v2-compatibility.test.ts
+1 file passed; 46 tests passed
+
+pnpm check
+passed
+
+pnpm test
+12 test files passed; 165 tests passed
+
+pnpm build
+passed
+```
+
+The build emitted the existing Vite warning about `/api/platform/config.js` lacking `type="module"`; it did not fail the build.
+
+### Adversarial audit conclusion
+
+The independently inspected `validatePcbRootBoundary`, `validatePcb`, `resolveLegacyDrcSourceVersion`, `runDesignRules`, `evaluatePcbV2`, `validateProjectJsonDetailed`, and compatibility fixtures show no confirmed P1 defect.
+
+Specifically verified:
+
+- unsupported and malformed schema versions fail closed;
+- unknown root and nested metadata are rejected;
+- `validatePcb` and aggregate `runDesignRules` retain distinct, documented invalid-input identities;
+- explicit versionless, schema-v1, and schema-v2 inputs dispatch to the frozen V2 evaluator without import migration;
+- Via diameter fallback remains `diameter ?? drill * 2`;
+- projected-2D Via-pair iteration order, comparator behavior, object ordering, and finding identities remain covered by goldens;
+- aggregate DRC paths are tested in addition to direct PCB-helper paths;
+- no migration behavior or unrelated workspace behavior was changed.
+
+No defect was found that justifies a production-code or test-code correction in this audit pass. Phase 6.1 P2 was not started.
+
+The PR remains a draft and is suitable for independent review of the three-file P1 diff. It is not merged, and `main` remains unchanged.
