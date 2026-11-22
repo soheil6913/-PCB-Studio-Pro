@@ -2,7 +2,7 @@
 
 ## Status
 
-**Implementation committed on an isolated branch; validation evidence is pending.**
+**Implementation and hosted verification passed on an isolated branch; independent review completed; merge remains gated.**
 
 - Repository: `soheil6913/-PCB-Studio-Pro`
 - Base branch: `main`
@@ -15,14 +15,14 @@
 
 ### 1. Explicit legacy source-version dispatch
 
-`runDesignRules` now resolves the source state using only `schemaVersion` after the complete project validator succeeds:
+`runDesignRules` resolves the source state using only the persisted `schemaVersion`, after complete project validation:
 
 - `undefined` → explicit `versionless` compatibility case.
 - `1` → explicit `schema-v1` compatibility case.
 - `2` → explicit `schema-v2` compatibility case.
 - Any unsupported or malformed state is rejected before evaluator dispatch.
 
-All three accepted legacy cases route to the same unchanged V2 PCB geometry evaluator. This preserves the existing direct-DRC behavior for v1 and versionless projects without applying import migration during DRC. `CURRENT_PROJECT_VERSION` remains 2.
+All three accepted legacy cases intentionally route to the same frozen V2 PCB geometry evaluator. This preserves the existing direct-DRC behavior for v1 and versionless projects without applying import migration during DRC. `CURRENT_PROJECT_VERSION` remains 2.
 
 ### 2. Guarded public PCB boundary
 
@@ -30,7 +30,7 @@ The former PCB evaluator body is now an internal V2 implementation. The exported
 
 - accepts only recognized project-root fields;
 - rejects unsupported or malformed explicit schema versions;
-- leaves the existing nested Via validation in force;
+- retains nested Via validation through the existing V2 validation path;
 - does not infer a model from ViaSpan, Stackup, process-evidence, ledger, graph, or other unknown metadata;
 - retains the existing direct-helper invalid-input diagnostic.
 
@@ -38,9 +38,9 @@ The internal V2 geometry implementation, projected-2D all-Via-pairs formula, `di
 
 ### 3. Regression coverage added
 
-The compatibility suite now includes:
+The compatibility suite includes:
 
-- all existing Via geometry goldens through aggregate `runDesignRules`, not only `validatePcb`;
+- all Via geometry goldens through aggregate `runDesignRules`, not only `validatePcb`;
 - separate versionless, v1, and v2 compatibility paths;
 - malformed and unsupported versions: 0, negative, fractional, 3, 99, string, and null;
 - direct-helper rejection for unsupported versions;
@@ -48,29 +48,48 @@ The compatibility suite now includes:
 - nested ViaSpan-like field rejection;
 - exact golden identity comparison for `id`, `ruleId`, `severity`, and ordered `objectIds`.
 
-## Files changed
+## Independent review
+
+The PR diff was independently reviewed against the declared compatibility contract and current `main` baseline.
+
+- The root-field allowlist matches the existing full-project validator's root allowlist.
+- The new public helper guard rejects unknown root metadata and unsupported explicit schema versions before entering the legacy V2 evaluator.
+- The evaluator body was moved behind the guard without changing its geometry logic.
+- The aggregate DRC path validates the complete project before explicit source-version dispatch.
+- The PR changes are confined to the implementation, compatibility tests, and this report.
+
+No correctness defect requiring a code change was identified in this review pass. This is not a formal proof of all geometry behavior; the golden and automated test suite remain the executable regression evidence.
+
+## Hosted validation evidence
+
+GitHub Actions **Engineering verification**, run **#67** (run ID `44985555299`), completed with conclusion **success** on implementation/report commit `8e62bd98d0bb578158ecccefc3fd3b500c33dd81`.
+
+The `verify` job completed all of these steps successfully:
+
+- dependency installation (`pnpm install --frozen-lockfile`);
+- TypeScript check (`pnpm check`);
+- full automated test suite (`pnpm test`);
+- production build (`pnpm build`).
+
+Run: https://github.com/soheil6913/-PCB-Studio-Pro/actions/runs/44985555299
+
+The report is being synchronized after that successful run; this report-only follow-up does not alter production or test code. Its own commit should receive a fresh hosted verification run before the PR is considered ready for merge.
+
+## Files changed in PR #3
 
 - `shared/engineering.ts`
 - `shared/engineering.v2-compatibility.test.ts`
-
-## Validation status and limitations
-
-The test cases have been added but **have not yet been executed** in this environment. A local clone attempt could not resolve `github.com` because network DNS access is unavailable. A PR-local workflow was briefly evaluated but removed because GitHub does not run a newly introduced pull-request workflow until that workflow exists on the base branch; merging merely to unlock tests would violate the verification gate. No passing test, type-check, or build result is claimed.
-
-The next gate is to run at minimum:
-
-- `pnpm exec vitest run shared/engineering.v2-compatibility.test.ts`
-- `pnpm exec tsc --noEmit`
-- preferably the full `pnpm test` suite.
-
-Any compile/test failure must be corrected on this branch before the P1 implementation is considered verified. No P2 work is authorized by this report.
+- `PHASE_6_1_P1_IMPLEMENTATION_REPORT.md`
 
 ## Key implementation commits
 
 - `81c50b4b65776cdc9d319b53e0933fa3f0c3424e` — guarded boundary and initial dispatch.
 - `f3ed3c12e6555fca825d3a088d4f3caa8ce69b4f` — dispatch and boundary regression tests.
 - `06ed36da7936670d713cd497b2283eec343f84ae` — exhaustive fail-closed dispatch.
+- `8e62bd98d0bb578158ecccefc3fd3b500c33dd81` — report revision preceding this evidence synchronization.
 
-Additional documentation and temporary CI-workflow cleanup commits are visible in the PR history; they do not alter the final production/test file set listed above.
+The implementation branch remains isolated from `main`. Draft PR: https://github.com/soheil6913/-PCB-Studio-Pro/pull/3. No merge was performed.
 
-The implementation branch is isolated from `main`. Draft PR: https://github.com/soheil6913/-PCB-Studio-Pro/pull/3. No merge was performed.
+## Next gate
+
+Confirm the fresh CI run for this report synchronization, then complete the PR readiness review. Do not start Phase 6.1 P2 or merge this PR until the final gate is explicitly cleared.
