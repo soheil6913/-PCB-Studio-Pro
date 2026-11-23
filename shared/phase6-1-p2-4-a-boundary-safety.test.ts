@@ -86,7 +86,7 @@ describe("Phase 6.1 P2.4-A sparse-array boundary validation", () => {
     },
   );
 
-  it.each(["wires", "junctions"] as const)(
+  it.each(["components", "wires", "tracks", "vias", "junctions"] as const)(
     "rejects sparse PCB root %s collections without broadening PCB field validation",
     field => {
       const project = { ...base(), [field]: sparseArray() };
