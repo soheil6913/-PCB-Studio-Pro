@@ -47,14 +47,28 @@ function validPad(extra: Record<string, unknown> = {}) {
 }
 
 describe("Phase 6.1 P2.4-A sparse-array boundary validation", () => {
-  it.each(["components", "wires", "tracks", "vias"] as const)(
-    "rejects a sparse root %s array with an index-specific diagnostic",
-    field => {
-      const project = { ...base(), [field]: sparseArray() };
+  it.each(
+    (["components", "wires", "tracks", "vias"] as const).flatMap(field =>
+      [0, 1, 2].map(holeIndex => ({ field, holeIndex })),
+    ),
+  )(
+    "rejects a sparse root $field array with a hole at index $holeIndex",
+    ({ field, holeIndex }) => {
+      const values: Record<typeof field, (index: number) => unknown> = {
+        components: index => validComponent({ id: "c" + index, ref: "U" + index }),
+        wires: index => ({ id: "w" + index, from: { x: 0, y: 0 }, to: { x: 1, y: 1 } }),
+        tracks: index => ({ id: "t" + index, from: { x: 0, y: 0 }, to: { x: 1, y: 1 }, width: 1, layer: "F.Cu" }),
+        vias: index => ({ id: "v" + index, x: 0, y: 0, drill: 0.5, diameter: 1 }),
+      };
+      const collection = sparseArray(3);
+      for (let index = 0; index < 3; index += 1) {
+        if (index !== holeIndex) collection[index] = values[field](index);
+      }
+      const project = { ...base(), [field]: collection };
       const checked = validateProjectJsonDetailed(project);
       expect(checked.ok).toBe(false);
       expect(checked.errors).toContainEqual({
-        path: `${field}[0]`,
+        path: field + "[" + holeIndex + "]",
         message: "must not contain sparse array holes",
       });
       expect(migrateProjectJson(project)).toBeNull();
