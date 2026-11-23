@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   migrateProjectJson,
+  padToPadDistanceDetailed,
   runDesignRules,
   validatePcb,
   validateProjectJsonDetailed,
@@ -156,11 +157,37 @@ describe("Phase 6.1 P2.4-A sparse-array boundary validation", () => {
   });
 });
 
+function projectWithRotatedOvalPads() {
+  const project = base();
+  project.designRules.padToPadClearance = 0;
+  project.components = [
+    validComponent({
+      x: 100,
+      y: 100,
+      footprintGeometry: {
+        identifier: "FP1",
+        pads: [validPad({ id: "p1", shape: "oval", width: 6, height: 2, rotation: 20 })],
+      },
+    }),
+    validComponent({
+      id: "u2",
+      ref: "U2",
+      x: 112,
+      y: 108,
+      footprintGeometry: {
+        identifier: "FP2",
+        pads: [validPad({ id: "p2", shape: "oval", width: 6, height: 2, rotation: 65 })],
+      },
+    }),
+  ];
+  return project;
+}
+
 describe("Phase 6.1 P2.4-A validatePcb geometry options", () => {
   it.each([null, [], "invalid", 7])(
-    "returns a stable options diagnostic for non-object options (%s)",
+    "returns a stable options diagnostic for non-object options (%s) before evaluating pad geometry",
     options => {
-      const findings = validatePcb(base() as never, options as never);
+      const findings = validatePcb(projectWithRotatedOvalPads() as never, options as never);
       expect(findings).toHaveLength(1);
       expect(findings[0]?.ruleId).toBe("PCB_INVALID_OPTIONS");
       expect(findings[0]?.explanation).toContain("options");
@@ -168,21 +195,46 @@ describe("Phase 6.1 P2.4-A validatePcb geometry options", () => {
     },
   );
 
-  it.each([null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, "64"])(
+  it.each([null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 257, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1, "64"])(
     "rejects invalid gjkMaxIterations value (%s)",
     gjkMaxIterations => {
       const findings = validatePcb(base() as never, { gjkMaxIterations } as never);
       expect(findings[0]?.ruleId).toBe("PCB_INVALID_OPTIONS");
-      expect(findings[0]?.correction).toBe("must be a positive safe integer");
+      expect(findings[0]?.correction).toBe("must be an integer between 1 and 256");
     },
   );
 
-  it("accepts omitted options, undefined, an empty object, and positive safe integers", () => {
+  it("accepts omitted options, undefined, an empty object, and iteration budgets within the operational cap", () => {
     expect(validatePcb(base() as never)).toEqual([]);
     expect(validatePcb(base() as never, undefined as never)).toEqual([]);
     expect(validatePcb(base() as never, {})).toEqual([]);
     expect(validatePcb(base() as never, { gjkMaxIterations: 1 })).toEqual([]);
-    expect(validatePcb(base() as never, { gjkMaxIterations: Number.MAX_SAFE_INTEGER })).toEqual([]);
+    expect(validatePcb(base() as never, { gjkMaxIterations: 256 })).toEqual([]);
+  });
+
+  it("reaches the rotated Oval-to-Oval GJK path with a valid bounded budget", () => {
+    const first = validPad({
+      id: "p1",
+      shape: "oval",
+      width: 6,
+      height: 2,
+      position: { x: 0, y: 0 },
+      rotation: 20,
+    });
+    const second = validPad({
+      id: "p2",
+      shape: "oval",
+      width: 6,
+      height: 2,
+      position: { x: 9, y: 6 },
+      rotation: 65,
+    });
+    const distance = padToPadDistanceDetailed(first as never, second as never, { gjkMaxIterations: 256 });
+    expect(distance.state).toBe("CONVERGED");
+    if (distance.state === "CONVERGED") expect(Number.isFinite(distance.distance)).toBe(true);
+
+    const findings = validatePcb(projectWithRotatedOvalPads() as never, { gjkMaxIterations: 256 });
+    expect(findings.some(finding => finding.ruleId === "PCB_GEOMETRY_INDETERMINATE")).toBe(false);
   });
 
   it("rejects unknown geometry option fields instead of silently ignoring them", () => {
