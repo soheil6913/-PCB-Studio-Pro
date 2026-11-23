@@ -123,7 +123,7 @@ export function gjkWithinDistance(
   clearance: number,
   maxIterations = 64,
 ): GjkDecision {
-  if (!Number.isInteger(maxIterations) || maxIterations < 1)
+  if (!Number.isInteger(maxIterations) || maxIterations < 1 || maxIterations > MAX_GJK_ITERATIONS)
     return { state: "INDETERMINATE", iterations: 0, reason: "invalid iteration budget" };
 
   const centerDelta = sub(a.position, b.position);
