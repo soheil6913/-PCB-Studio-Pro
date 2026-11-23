@@ -347,6 +347,10 @@ function validatePcbRootBoundary(value: unknown): ValidationError[] {
   }
   const errors: ValidationError[] = [];
   unknownFields(value, PCB_PROJECT_ROOT_FIELDS, "$", errors);
+  for (const field of ["components", "wires", "tracks", "vias", "junctions"] as const) {
+    const collection = (value as Record<string, unknown>)[field];
+    if (Array.isArray(collection)) validateDenseArray(collection, field, errors);
+  }
   const schemaVersion = (value as { schemaVersion?: unknown }).schemaVersion;
   if (schemaVersion !== undefined && (
     typeof schemaVersion !== "number" ||
