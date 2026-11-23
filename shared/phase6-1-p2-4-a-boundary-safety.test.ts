@@ -233,6 +233,10 @@ describe("Phase 6.1 P2.4-A validatePcb geometry options", () => {
     expect(distance.state).toBe("CONVERGED");
     if (distance.state === "CONVERGED") expect(Number.isFinite(distance.distance)).toBe(true);
 
+    const overBudget = padToPadDistanceDetailed(first as never, second as never, { gjkMaxIterations: 257 });
+    expect(overBudget.state).toBe("INDETERMINATE");
+    if (overBudget.state === "INDETERMINATE") expect(overBudget.reason).toContain("invalid iteration budget");
+
     const findings = validatePcb(projectWithRotatedOvalPads() as never, { gjkMaxIterations: 256 });
     expect(findings.some(finding => finding.ruleId === "PCB_GEOMETRY_INDETERMINATE")).toBe(false);
   });
