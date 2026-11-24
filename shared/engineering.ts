@@ -42,6 +42,15 @@ function safeDistance(a: Point, b: Point): number | null {
   const value = normalized * scale;
   return Number.isFinite(value) ? value : null;
 }
+function distanceThresholdState(a: Point, b: Point, threshold: number): NumericState {
+  const dx = safeDifference(b.x, a.x); const dy = safeDifference(b.y, a.y);
+  if (dx === null || dy === null) return "FALSE";
+  const scale = Math.max(Math.abs(dx), Math.abs(dy), Number.MIN_VALUE);
+  const normalized = Math.hypot(dx / scale, dy / scale);
+  const value = normalized * scale;
+  if (!Number.isFinite(value)) return "FALSE";
+  return value <= threshold ? "TRUE" : "FALSE";
+}
 export function distance(a: Point, b: Point) { return safeDistance(a, b) ?? Number.NaN; }
 export function measure(start: Point, end: Point, grid = 20): Measurement { const px = distance(start, end); return { start, end, distance: px, gridUnits: grid > 0 ? px / grid : px }; }
 export function snapToGrid(point: Point, grid: number) { return grid > 0 ? { x: Math.round(point.x / grid) * grid, y: Math.round(point.y / grid) * grid } : point; }
@@ -49,31 +58,47 @@ export function rotatePoint(point: Point, degrees: number) { const radians = deg
 export function transformLocalPoint(origin: Point, local: Point, rotation = 0) { const rotated = rotatePoint(local, rotation); return { x: origin.x + rotated.x, y: origin.y + rotated.y }; }
 export function route45(start: Point, end: Point): Point[] { const dx = end.x - start.x; const dy = end.y - start.y; if (Math.abs(dx) < EPSILON || Math.abs(dy) < EPSILON || Math.abs(Math.abs(dx) - Math.abs(dy)) < EPSILON) return [start, end]; const diagonal = Math.min(Math.abs(dx), Math.abs(dy)); return [start, { x: start.x + Math.sign(dx) * diagonal, y: start.y }, end]; }
 
-function orientation(a: Point, b: Point, c: Point) {
-  // Prefer translated differences (more accurate for large common offsets), then
-  // scale before determinant products. If subtraction itself overflows, scale
-  // coordinates first so finite extreme inputs still produce bounded deltas.
-  let abx = b.x - a.x;
-  let aby = b.y - a.y;
-  let acx = c.x - a.x;
-  let acy = c.y - a.y;
-  if (![abx, aby, acx, acy].every(Number.isFinite)) {
-    const coordinateScale = Math.max(Math.abs(a.x), Math.abs(a.y), Math.abs(b.x), Math.abs(b.y), Math.abs(c.x), Math.abs(c.y), Number.MIN_VALUE);
-    abx = b.x / coordinateScale - a.x / coordinateScale;
-    aby = b.y / coordinateScale - a.y / coordinateScale;
-    acx = c.x / coordinateScale - a.x / coordinateScale;
-    acy = c.y / coordinateScale - a.y / coordinateScale;
-  }
+type OrientationState = -1 | 0 | 1 | "INDETERMINATE";
+type Dyadic = { mantissa: bigint; exponent: number };
+function exactDyadic(value: number): Dyadic | null {
+  if (!Number.isFinite(value)) return null;
+  const bits = new DataView(new ArrayBuffer(8)); bits.setFloat64(0, value, false);
+  const raw = bits.getBigUint64(0, false);
+  const sign = (raw >> 63n) === 0n ? 1n : -1n;
+  const exponentBits = Number((raw >> 52n) & 0x7ffn);
+  const fraction = raw & 0xfffffffffffffn;
+  if (exponentBits === 0) return { mantissa: sign * fraction, exponent: -1074 };
+  return { mantissa: sign * ((1n << 52n) | fraction), exponent: exponentBits - 1023 - 52 };
+}
+function dyadicSubtract(a: Dyadic, b: Dyadic): Dyadic {
+  const exponent = Math.min(a.exponent, b.exponent);
+  return { mantissa: (a.mantissa << BigInt(a.exponent - exponent)) - (b.mantissa << BigInt(b.exponent - exponent)), exponent };
+}
+function dyadicMultiply(a: Dyadic, b: Dyadic): Dyadic { return { mantissa: a.mantissa * b.mantissa, exponent: a.exponent + b.exponent }; }
+function exactOrientation(a: Point, b: Point, c: Point): OrientationState {
+  const ax = exactDyadic(a.x); const ay = exactDyadic(a.y); const bx = exactDyadic(b.x); const by = exactDyadic(b.y); const cx = exactDyadic(c.x); const cy = exactDyadic(c.y);
+  if (!ax || !ay || !bx || !by || !cx || !cy) return "INDETERMINATE";
+  const abx = dyadicSubtract(bx, ax); const aby = dyadicSubtract(by, ay); const acx = dyadicSubtract(cx, ax); const acy = dyadicSubtract(cy, ay);
+  const left = dyadicMultiply(abx, acy); const right = dyadicMultiply(aby, acx);
+  const exponent = Math.min(left.exponent, right.exponent);
+  const determinant = (left.mantissa << BigInt(left.exponent - exponent)) - (right.mantissa << BigInt(right.exponent - exponent));
+  return determinant === 0n ? 0 : determinant > 0n ? 1 : -1;
+}
+function orientationState(a: Point, b: Point, c: Point): OrientationState {
+  const abx = safeDifference(b.x, a.x); const aby = safeDifference(b.y, a.y);
+  const acx = safeDifference(c.x, a.x); const acy = safeDifference(c.y, a.y);
+  if (abx === null || aby === null || acx === null || acy === null) return exactOrientation(a, b, c);
   const scale = Math.max(Math.abs(abx), Math.abs(aby), Math.abs(acx), Math.abs(acy), Number.MIN_VALUE);
-  abx /= scale;
-  aby /= scale;
-  acx /= scale;
-  acy /= scale;
-  const left = abx * acy;
-  const right = aby * acx;
-  const value = left - right;
-  const roundoff = Number.EPSILON * (Math.abs(left) + Math.abs(right)) * 8;
-  return Math.abs(value) <= roundoff ? 0 : value > 0 ? 1 : -1;
+  const left = (abx / scale) * (acy / scale); const right = (aby / scale) * (acx / scale); const value = left - right;
+  if (!Number.isFinite(value)) return exactOrientation(a, b, c);
+  // Four rounded products/subtractions give this conservative first-order bound.
+  const errorBound = (3 + 16 * Number.EPSILON) * Number.EPSILON * (Math.abs(left) + Math.abs(right));
+  if (Math.abs(value) > errorBound) return value > 0 ? 1 : -1;
+  return exactOrientation(a, b, c);
+}
+function orientation(a: Point, b: Point, c: Point) {
+  const state = orientationState(a, b, c);
+  return state === "INDETERMINATE" ? 0 : state;
 }
 function onSegment(a: Point, b: Point, point: Point) {
   const coordinateScale = Math.max(Math.abs(a.x), Math.abs(a.y), Math.abs(b.x), Math.abs(b.y), Math.abs(point.x), Math.abs(point.y), Number.MIN_VALUE);
@@ -82,11 +107,27 @@ function onSegment(a: Point, b: Point, point: Point) {
 }
 export function segmentsIntersect(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point) { const aZero = aStart.x === aEnd.x && aStart.y === aEnd.y; const bZero = bStart.x === bEnd.x && bStart.y === bEnd.y; if (aZero && bZero) return distance(aStart, bStart) <= EPSILON; if (aZero) return orientation(bStart, bEnd, aStart) === 0 && onSegment(bStart, bEnd, aStart); if (bZero) return orientation(aStart, aEnd, bStart) === 0 && onSegment(aStart, aEnd, bStart); const o1 = orientation(aStart, aEnd, bStart); const o2 = orientation(aStart, aEnd, bEnd); const o3 = orientation(bStart, bEnd, aStart); const o4 = orientation(bStart, bEnd, aEnd); return o1 !== o2 && o3 !== o4 || o1 === 0 && onSegment(aStart, aEnd, bStart) || o2 === 0 && onSegment(aStart, aEnd, bEnd) || o3 === 0 && onSegment(bStart, bEnd, aStart) || o4 === 0 && onSegment(bStart, bEnd, aEnd); }
 function pointToSegmentState(point: Point, start: Point, end: Point): { state: NumericState; distance?: number } {
-  const dx = safeDifference(end.x, start.x);
-  const dy = safeDifference(end.y, start.y);
-  const px = safeDifference(point.x, start.x);
-  const py = safeDifference(point.y, start.y);
-  if (dx === null || dy === null || px === null || py === null) return { state: "INDETERMINATE" };
+  let dx = safeDifference(end.x, start.x);
+  let dy = safeDifference(end.y, start.y);
+  let px = safeDifference(point.x, start.x);
+  let py = safeDifference(point.y, start.y);
+  if (dx === null || dy === null || px === null || py === null) {
+    const scale = Math.max(Math.abs(point.x), Math.abs(point.y), Math.abs(start.x), Math.abs(start.y), Math.abs(end.x), Math.abs(end.y), Number.MIN_VALUE);
+    const normalized = [point.x / scale, point.y / scale, start.x / scale, start.y / scale, end.x / scale, end.y / scale];
+    if (!normalized.every(Number.isFinite)) return { state: "INDETERMINATE" };
+    dx = normalized[4] - normalized[2]; dy = normalized[5] - normalized[3];
+    px = normalized[0] - normalized[2]; py = normalized[1] - normalized[3];
+    const normalizedLength = Math.hypot(dx, dy);
+    if (!Number.isFinite(normalizedLength) || normalizedLength === 0) return { state: "INDETERMINATE" };
+    const normalizedProjection = (px * (dx / normalizedLength) + py * (dy / normalizedLength)) / normalizedLength;
+    if (!Number.isFinite(normalizedProjection)) return { state: "INDETERMINATE" };
+    const normalizedT = Math.max(0, Math.min(1, normalizedProjection));
+    const normalizedDistance = Math.hypot(px - normalizedT * dx, py - normalizedT * dy);
+    if (!Number.isFinite(normalizedDistance)) return { state: "INDETERMINATE" };
+    if (normalizedDistance <= CONNECT_TOLERANCE / scale) return { state: "INDETERMINATE" };
+    const value = normalizedDistance * scale;
+    return { state: "TRUE", distance: Number.isFinite(value) ? value : Number.POSITIVE_INFINITY };
+  }
   const length = Math.hypot(dx, dy);
   if (!Number.isFinite(length)) return { state: "INDETERMINATE" };
   if (length === 0) {
@@ -344,17 +385,15 @@ function pointKey(point: Point) { return `${point.x.toFixed(6)}:${point.y.toFixe
 function segmentIntersectionState(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point): NumericState {
   const points = [aStart, aEnd, bStart, bEnd];
   if (!points.every(validPoint)) return "INDETERMINATE";
-  const orientations = [[aStart, aEnd, bStart], [aStart, aEnd, bEnd], [bStart, bEnd, aStart], [bStart, bEnd, aEnd]];
-  const signs = orientations.map(([a, b, c]) => {
-    const abx = safeDifference(b.x, a.x); const aby = safeDifference(b.y, a.y);
-    const acx = safeDifference(c.x, a.x); const acy = safeDifference(c.y, a.y);
-    if (abx === null || aby === null || acx === null || acy === null) return null;
-    const scale = Math.max(Math.abs(abx), Math.abs(aby), Math.abs(acx), Math.abs(acy), Number.MIN_VALUE);
-    const value = (abx / scale) * (acy / scale) - (aby / scale) * (acx / scale);
-    if (!Number.isFinite(value)) return null;
-    return Math.abs(value) <= Number.EPSILON * 8 ? 0 : value > 0 ? 1 : -1;
-  });
-  if (signs.some(sign => sign === null)) return "INDETERMINATE";
+  const coordinateDifferences = [
+    safeDifference(aEnd.x, aStart.x), safeDifference(aEnd.y, aStart.y),
+    safeDifference(bEnd.x, bStart.x), safeDifference(bEnd.y, bStart.y),
+    safeDifference(bStart.x, aStart.x), safeDifference(bStart.y, aStart.y),
+    safeDifference(bEnd.x, aStart.x), safeDifference(bEnd.y, aStart.y),
+  ];
+  const hasOverflowedDifference = coordinateDifferences.some(value => value === null);
+  const signs = [[aStart, aEnd, bStart], [aStart, aEnd, bEnd], [bStart, bEnd, aStart], [bStart, bEnd, aEnd]].map(([a, b, c]) => orientationState(a, b, c));
+  if (signs.some(sign => sign === "INDETERMINATE")) return "INDETERMINATE";
   const [o1, o2, o3, o4] = signs as number[];
   const endpoint = (a: Point, b: Point, point: Point) => {
     const calculation = pointToSegmentState(point, a, b);
@@ -362,7 +401,8 @@ function segmentIntersectionState(aStart: Point, aEnd: Point, bStart: Point, bEn
   };
   const touching = (o1 === 0 && endpoint(aStart, aEnd, bStart)) || (o2 === 0 && endpoint(aStart, aEnd, bEnd)) || (o3 === 0 && endpoint(bStart, bEnd, aStart)) || (o4 === 0 && endpoint(bStart, bEnd, aEnd));
   if (touching === null) return "INDETERMINATE";
-  return ((o1 !== o2 && o3 !== o4) || touching) ? "TRUE" : "FALSE";
+  const intersects = (o1 !== o2 && o3 !== o4) || touching;
+  return hasOverflowedDifference && intersects ? "INDETERMINATE" : (intersects ? "TRUE" : "FALSE");
 }
 function connectivityDistance(point: Point, start: Point, end: Point): NumericState {
   const calculation = pointToSegmentState(point, start, end);
@@ -391,7 +431,7 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
     return [result("SCH_INVALID_INPUT", "Error", [], `Schematic input is invalid at ${first.path}.`, first.message)];
   }
   const normalized = input as Pick<EngineeringProject, "components" | "wires" | "junctions">;
-  const findings: DrcResult[] = []; let topologyIndeterminate = false; const markIndeterminate = (objectIds: string[], explanation: string, coordinates?: Point[]) => { topologyIndeterminate = true; addSchematicIndeterminate(findings, objectIds, explanation, coordinates); }; const refs = new Map<string, EngineeringComponent[]>(); const ids = new Set<string>();
+  const findings: DrcResult[] = []; const uncertainWires = new Set<string>(); const uncertainPins = new Set<string>(); const uncertainNets = new Set<string>(); const markIndeterminate = (objectIds: string[], explanation: string, coordinates?: Point[], affectedWires: string[] = [], affectedPins: string[] = []) => { addSchematicIndeterminate(findings, objectIds, explanation, coordinates); affectedWires.forEach(id => uncertainWires.add(id)); affectedPins.forEach(id => uncertainPins.add(id)); }; const refs = new Map<string, EngineeringComponent[]>(); const ids = new Set<string>();
   normalized.components.forEach(component => { refs.set(component.ref, [...(refs.get(component.ref) ?? []), component]); if (ids.has(component.id)) findings.push(result("SCH_DUPLICATE_COMPONENT_ID", "Error", [component.id], `Component ID ${component.id} is duplicated.`, "Assign a stable unique component ID.")); ids.add(component.id); });
   refs.forEach((items, ref) => { if (items.length > 1) findings.push(result("SCH_DUPLICATE_REFERENCE", "Error", items.map(item => item.id), `Reference ${ref} is used more than once.`, "Assign a unique reference designator.")); });
   normalized.components.forEach(component => { if (!component.value?.trim()) findings.push(result("SCH_MISSING_VALUE", "Warning", [component.id], `${component.ref} has no value.`, "Set a value before generating a BOM.")); if (!component.pins?.length) findings.push(result("SCH_UNVERIFIED_PIN_GEOMETRY", "Info", [component.id], `${component.ref} has no verified pin geometry; pin connectivity is not fully validated.`, "Attach a verified symbol definition with pin coordinates.")); });
@@ -400,9 +440,8 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
   const addNode = (point: Point) => {
     let indeterminate = false;
     const existing = nodes.findIndex(candidate => {
-      const state = safeDistance(candidate, point);
-      if (state === null) { indeterminate = true; return false; }
-      return state <= CONNECT_TOLERANCE;
+      const state = distanceThresholdState(candidate, point, CONNECT_TOLERANCE);
+      return state === "TRUE";
     });
     return { index: existing >= 0 ? existing : (nodes.push(point), nodes.length - 1), indeterminate };
   };
@@ -411,22 +450,22 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
   const union = (a: number, b: number) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent[rb] = ra; };
   const wireNodeIds = normalized.wires.map(wire => {
     const aResult = addNode(wire.from); const bResult = addNode(wire.to);
-    if (aResult.indeterminate || bResult.indeterminate) markIndeterminate([wire.id], "Wire endpoint proximity could not be decided numerically.", [wire.from, wire.to]);
+    if (aResult.indeterminate || bResult.indeterminate) markIndeterminate([wire.id], "Wire endpoint proximity could not be decided numerically.", [wire.from, wire.to], [wire.id]);
     while (parent.length < nodes.length) parent.push(parent.length);
     union(aResult.index, bResult.index);
     return { wire, a: aResult.index, b: bResult.index };
   });
   const wireConnection = (point: Point, wire: EngineeringWire) => connectivityDistance(point, wire.from, wire.to);
   normalized.junctions?.forEach(junction => {
-    const nodeResult = addNode(junction); if (nodeResult.indeterminate) markIndeterminate([], "Junction proximity could not be decided numerically.", [junction]);
+    const nodeResult = addNode(junction); if (nodeResult.indeterminate) markIndeterminate([], "Junction proximity could not be decided numerically.", [junction], normalized.wires.map(wire => wire.id));
     while (parent.length < nodes.length) parent.push(parent.length);
-    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(junction, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id], "Junction-to-wire connectivity is numerically indeterminate.", [junction, wire.from, wire.to]); });
+    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(junction, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id], "Junction-to-wire connectivity is numerically indeterminate.", [junction, wire.from, wire.to], [wire.id]); });
   });
   const pinNodes = normalized.components.flatMap(component => (component.pins ?? []).map(pin => {
     const point = transformLocalPoint({ x: component.x, y: component.y }, pin.position, component.rotation ?? 0);
-    const nodeResult = addNode(point); if (nodeResult.indeterminate) markIndeterminate([`${component.id}:${pin.id}`], "Pin proximity could not be decided numerically.", [point]);
+    const nodeResult = addNode(point); if (nodeResult.indeterminate) markIndeterminate([`${component.id}:${pin.id}`], "Pin proximity could not be decided numerically.", [point], [], [`${component.id}:${pin.id}`]);
     while (parent.length < nodes.length) parent.push(parent.length);
-    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(point, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id, `${component.id}:${pin.id}`], "Pin-to-wire connectivity is numerically indeterminate.", [point, wire.from, wire.to]); });
+    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(point, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id, `${component.id}:${pin.id}`], "Pin-to-wire connectivity is numerically indeterminate.", [point, wire.from, wire.to], [wire.id], [`${component.id}:${pin.id}`]); });
     return { id: `${component.id}:${pin.id}`, point, node: nodeResult.index, required: pin.required !== false };
   }));
   const junctionAtIntersection = (a: EngineeringWire, b: EngineeringWire): NumericState => {
@@ -437,16 +476,16 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
   };
   for (let i = 0; i < wireNodeIds.length; i += 1) for (let j = i + 1; j < wireNodeIds.length; j += 1) {
     const a = wireNodeIds[i]; const b = wireNodeIds[j]; const intersection = segmentIntersectionState(a.wire.from, a.wire.to, b.wire.from, b.wire.to);
-    if (intersection === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Wire intersection could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    if (intersection === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Wire intersection could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to], [a.wire.id, b.wire.id]); continue; }
     if (intersection === "FALSE") continue;
     const endpointStates = [...[a.wire.from, a.wire.to].map(point => wireConnection(point, b.wire)), ...[b.wire.from, b.wire.to].map(point => wireConnection(point, a.wire))];
-    if (endpointStates.includes("INDETERMINATE")) { markIndeterminate([a.wire.id, b.wire.id], "Wire endpoint touch could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    if (endpointStates.includes("INDETERMINATE")) { markIndeterminate([a.wire.id, b.wire.id], "Wire endpoint touch could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to], [a.wire.id, b.wire.id]); continue; }
     const junctionState = junctionAtIntersection(a.wire, b.wire);
-    if (junctionState === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Junction-at-intersection connectivity is numerically indeterminate.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    if (junctionState === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Junction-at-intersection connectivity is numerically indeterminate.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to], [a.wire.id, b.wire.id]); continue; }
     if (endpointStates.includes("TRUE") || junctionState === "TRUE") union(a.a, b.a); else findings.push(result("SCH_CROSSING_WITHOUT_JUNCTION", "Warning", [a.wire.id, b.wire.id], "Two wires cross without an explicit junction and are not electrically joined.", "Add a junction or route without crossing."));
   }
-  pinNodes.forEach(pin => { if (pin.required && !topologyIndeterminate && !wireNodeIds.some(({ a }) => find(a) === find(pin.node))) findings.push(result("SCH_UNCONNECTED_REQUIRED_PIN", "Error", [pin.id], `Required pin ${pin.id} is not connected to a wire.`, "Connect the pin to a net or mark it intentionally unused.", [pin.point])); });
-  const netRoots = new Map<string, Set<number>>(); wireNodeIds.forEach(({ wire, a }) => { if (!wire.net) return; const roots = netRoots.get(wire.net) ?? new Set<number>(); roots.add(find(a)); netRoots.set(wire.net, roots); }); if (!topologyIndeterminate) { netRoots.forEach((roots, net) => { if (roots.size > 1) findings.push(result("SCH_DISCONNECTED_NET", "Error", [...roots].map(String), `Net ${net} contains disconnected geometric components.`, "Join the segments or correct the net label.")); }); const rootNets = new Map<number, Set<string>>(); netRoots.forEach((roots, net) => roots.forEach(root => rootNets.set(root, new Set([...(rootNets.get(root) ?? []), net])))); rootNets.forEach((nets, root) => { if (nets.size > 1) findings.push(result("SCH_NET_NAME_CONFLICT", "Error", [...nets], `Different net names share the same geometric connection at node ${root}.`, "Resolve the short or correct the net labels.")); }); }
+  pinNodes.forEach(pin => { if (pin.required && !uncertainPins.has(pin.id) && !wireNodeIds.some(({ a }) => find(a) === find(pin.node))) findings.push(result("SCH_UNCONNECTED_REQUIRED_PIN", "Error", [pin.id], `Required pin ${pin.id} is not connected to a wire.`, "Connect the pin to a net or mark it intentionally unused.", [pin.point])); });
+  const netRoots = new Map<string, Set<number>>(); wireNodeIds.forEach(({ wire, a }) => { if (!wire.net) return; if (uncertainWires.has(wire.id)) uncertainNets.add(wire.net); const roots = netRoots.get(wire.net) ?? new Set<number>(); roots.add(find(a)); netRoots.set(wire.net, roots); }); netRoots.forEach((roots, net) => { if (!uncertainNets.has(net) && roots.size > 1) findings.push(result("SCH_DISCONNECTED_NET", "Error", [...roots].map(String), `Net ${net} contains disconnected geometric components.`, "Join the segments or correct the net label.")); }); const rootNets = new Map<number, Set<string>>(); netRoots.forEach((roots, net) => roots.forEach(root => rootNets.set(root, new Set([...(rootNets.get(root) ?? []), net])))); rootNets.forEach((nets, root) => { if (nets.size > 1 && ![...nets].some(net => uncertainNets.has(net))) findings.push(result("SCH_NET_NAME_CONFLICT", "Error", [...nets], `Different net names share the same geometric connection at node ${root}.`, "Resolve the short or correct the net labels.")); });
   return findings;
 }
 
