@@ -25,7 +25,24 @@ export const DEFAULT_BOARD: Board = { x: 150, y: 112, width: 660, height: 328, e
 const EPSILON = 1e-7;
 export const CONNECT_TOLERANCE = 1e-7;
 
-export function distance(a: Point, b: Point) { return Math.hypot(b.x - a.x, b.y - a.y); }
+type NumericState = "TRUE" | "FALSE" | "INDETERMINATE";
+function safeDifference(a: number, b: number): number | null {
+  const direct = a - b;
+  if (Number.isFinite(direct)) return direct;
+  const scale = Math.max(Math.abs(a), Math.abs(b), Number.MIN_VALUE);
+  const scaled = (a / scale - b / scale) * scale;
+  return Number.isFinite(scaled) ? scaled : null;
+}
+function safeDistance(a: Point, b: Point): number | null {
+  const dx = safeDifference(b.x, a.x);
+  const dy = safeDifference(b.y, a.y);
+  if (dx === null || dy === null) return null;
+  const scale = Math.max(Math.abs(dx), Math.abs(dy), Number.MIN_VALUE);
+  const normalized = Math.hypot(dx / scale, dy / scale);
+  const value = normalized * scale;
+  return Number.isFinite(value) ? value : null;
+}
+export function distance(a: Point, b: Point) { return safeDistance(a, b) ?? Number.NaN; }
 export function measure(start: Point, end: Point, grid = 20): Measurement { const px = distance(start, end); return { start, end, distance: px, gridUnits: grid > 0 ? px / grid : px }; }
 export function snapToGrid(point: Point, grid: number) { return grid > 0 ? { x: Math.round(point.x / grid) * grid, y: Math.round(point.y / grid) * grid } : point; }
 export function rotatePoint(point: Point, degrees: number) { const radians = degrees * Math.PI / 180; const cos = Math.cos(radians); const sin = Math.sin(radians); return { x: point.x * cos - point.y * sin, y: point.x * sin + point.y * cos }; }
@@ -64,17 +81,30 @@ function onSegment(a: Point, b: Point, point: Point) {
   return point.x >= Math.min(a.x, b.x) - roundoff && point.x <= Math.max(a.x, b.x) + roundoff && point.y >= Math.min(a.y, b.y) - roundoff && point.y <= Math.max(a.y, b.y) + roundoff;
 }
 export function segmentsIntersect(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point) { const aZero = aStart.x === aEnd.x && aStart.y === aEnd.y; const bZero = bStart.x === bEnd.x && bStart.y === bEnd.y; if (aZero && bZero) return distance(aStart, bStart) <= EPSILON; if (aZero) return orientation(bStart, bEnd, aStart) === 0 && onSegment(bStart, bEnd, aStart); if (bZero) return orientation(aStart, aEnd, bStart) === 0 && onSegment(aStart, aEnd, bStart); const o1 = orientation(aStart, aEnd, bStart); const o2 = orientation(aStart, aEnd, bEnd); const o3 = orientation(bStart, bEnd, aStart); const o4 = orientation(bStart, bEnd, aEnd); return o1 !== o2 && o3 !== o4 || o1 === 0 && onSegment(aStart, aEnd, bStart) || o2 === 0 && onSegment(aStart, aEnd, bEnd) || o3 === 0 && onSegment(bStart, bEnd, aStart) || o4 === 0 && onSegment(bStart, bEnd, aEnd); }
-function pointToSegment(point: Point, start: Point, end: Point) {
-  const dx = end.x - start.x;
-  const dy = end.y - start.y;
+function pointToSegmentState(point: Point, start: Point, end: Point): { state: NumericState; distance?: number } {
+  const dx = safeDifference(end.x, start.x);
+  const dy = safeDifference(end.y, start.y);
+  const px = safeDifference(point.x, start.x);
+  const py = safeDifference(point.y, start.y);
+  if (dx === null || dy === null || px === null || py === null) return { state: "INDETERMINATE" };
   const length = Math.hypot(dx, dy);
-  if (length === 0) return distance(point, start);
-  if (!Number.isFinite(length)) return Number.NaN;
-  const unitX = dx / length;
-  const unitY = dy / length;
-  const projection = ((point.x - start.x) * unitX + (point.y - start.y) * unitY) / length;
+  if (!Number.isFinite(length)) return { state: "INDETERMINATE" };
+  if (length === 0) {
+    const value = safeDistance(point, start);
+    return value === null ? { state: "INDETERMINATE" } : { state: "TRUE", distance: value };
+  }
+  const projection = (px * (dx / length) + py * (dy / length)) / length;
+  if (!Number.isFinite(projection)) return { state: "INDETERMINATE" };
   const t = Math.max(0, Math.min(1, projection));
-  return distance(point, { x: start.x + t * dx, y: start.y + t * dy });
+  const rx = px - t * dx;
+  const ry = py - t * dy;
+  const scale = Math.max(Math.abs(rx), Math.abs(ry), Number.MIN_VALUE);
+  const value = Math.hypot(rx / scale, ry / scale) * scale;
+  return Number.isFinite(value) ? { state: "TRUE", distance: value } : { state: "INDETERMINATE" };
+}
+function pointToSegment(point: Point, start: Point, end: Point) {
+  const calculation = pointToSegmentState(point, start, end);
+  return calculation.state === "TRUE" ? calculation.distance! : Number.NaN;
 }
 export function segmentDistance(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point) { if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) return 0; return Math.min(pointToSegment(aStart, bStart, bEnd), pointToSegment(aEnd, bStart, bEnd), pointToSegment(bStart, aStart, aEnd), pointToSegment(bEnd, aStart, aEnd)); }
 
@@ -311,6 +341,38 @@ function segmentToEllipseDistance(start: Point, end: Point, pad: Pad) { const ev
 function segmentToPadDistance(start: Point, end: Point, pad: Pad): number { const shape = pad.shape ?? "rect"; if (shape === "circle") return Math.max(0, pointToSegment(pad.position, start, end) - pad.width / 2); if (shape === "oval") return segmentToEllipseDistance(start, end, pad); const ext = halfExtents(pad); const radians = (pad.rotation ?? 0) * Math.PI / 180; const c = Math.cos(radians); const s = Math.sin(radians); const toLocal = (point: Point) => { const dx = point.x - pad.position.x; const dy = point.y - pad.position.y; return { x: dx * c + dy * s, y: -dx * s + dy * c }; }; const inside = (point: Point) => { const local = toLocal(point); return Math.abs(local.x) <= ext.x + EPSILON && Math.abs(local.y) <= ext.y + EPSILON; }; if (inside(start) || inside(end)) return 0; const fromLocal = (point: Point) => ({ x: pad.position.x + point.x * c - point.y * s, y: pad.position.y + point.x * s + point.y * c }); const corners: Point[] = [fromLocal({ x: -ext.x, y: -ext.y }), fromLocal({ x: ext.x, y: -ext.y }), fromLocal({ x: ext.x, y: ext.y }), fromLocal({ x: -ext.x, y: ext.y })]; let best = Infinity; for (let i = 0; i < 4; i += 1) best = Math.min(best, segmentDistance(start, end, corners[i], corners[(i + 1) % 4])); return best; }
 function pointKey(point: Point) { return `${point.x.toFixed(6)}:${point.y.toFixed(6)}`; }
 
+function segmentIntersectionState(aStart: Point, aEnd: Point, bStart: Point, bEnd: Point): NumericState {
+  const points = [aStart, aEnd, bStart, bEnd];
+  if (!points.every(validPoint)) return "INDETERMINATE";
+  const orientations = [[aStart, aEnd, bStart], [aStart, aEnd, bEnd], [bStart, bEnd, aStart], [bStart, bEnd, aEnd]];
+  const signs = orientations.map(([a, b, c]) => {
+    const abx = safeDifference(b.x, a.x); const aby = safeDifference(b.y, a.y);
+    const acx = safeDifference(c.x, a.x); const acy = safeDifference(c.y, a.y);
+    if (abx === null || aby === null || acx === null || acy === null) return null;
+    const scale = Math.max(Math.abs(abx), Math.abs(aby), Math.abs(acx), Math.abs(acy), Number.MIN_VALUE);
+    const value = (abx / scale) * (acy / scale) - (aby / scale) * (acx / scale);
+    if (!Number.isFinite(value)) return null;
+    return Math.abs(value) <= Number.EPSILON * 8 ? 0 : value > 0 ? 1 : -1;
+  });
+  if (signs.some(sign => sign === null)) return "INDETERMINATE";
+  const [o1, o2, o3, o4] = signs as number[];
+  const endpoint = (a: Point, b: Point, point: Point) => {
+    const calculation = pointToSegmentState(point, a, b);
+    return calculation.state === "INDETERMINATE" ? null : calculation.distance! <= CONNECT_TOLERANCE;
+  };
+  const touching = (o1 === 0 && endpoint(aStart, aEnd, bStart)) || (o2 === 0 && endpoint(aStart, aEnd, bEnd)) || (o3 === 0 && endpoint(bStart, bEnd, aStart)) || (o4 === 0 && endpoint(bStart, bEnd, aEnd));
+  if (touching === null) return "INDETERMINATE";
+  return ((o1 !== o2 && o3 !== o4) || touching) ? "TRUE" : "FALSE";
+}
+function connectivityDistance(point: Point, start: Point, end: Point): NumericState {
+  const calculation = pointToSegmentState(point, start, end);
+  if (calculation.state === "INDETERMINATE") return "INDETERMINATE";
+  return calculation.distance! <= CONNECT_TOLERANCE ? "TRUE" : "FALSE";
+}
+function addSchematicIndeterminate(findings: DrcResult[], objectIds: string[], explanation: string, coordinates?: Point[]) {
+  findings.push(result("SCH_GEOMETRY_INDETERMINATE", "Error", objectIds, explanation, "Repair or rescale the geometry before relying on schematic connectivity.", coordinates));
+}
+
 export function validateSchematic(project: Pick<EngineeringProject, "components" | "wires" | "junctions">): DrcResult[] {
   const candidate = project as unknown;
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
@@ -329,19 +391,62 @@ export function validateSchematic(project: Pick<EngineeringProject, "components"
     return [result("SCH_INVALID_INPUT", "Error", [], `Schematic input is invalid at ${first.path}.`, first.message)];
   }
   const normalized = input as Pick<EngineeringProject, "components" | "wires" | "junctions">;
-  const findings: DrcResult[] = []; const refs = new Map<string, EngineeringComponent[]>(); const ids = new Set<string>();
+  const findings: DrcResult[] = []; let topologyIndeterminate = false; const markIndeterminate = (objectIds: string[], explanation: string, coordinates?: Point[]) => { topologyIndeterminate = true; addSchematicIndeterminate(findings, objectIds, explanation, coordinates); }; const refs = new Map<string, EngineeringComponent[]>(); const ids = new Set<string>();
   normalized.components.forEach(component => { refs.set(component.ref, [...(refs.get(component.ref) ?? []), component]); if (ids.has(component.id)) findings.push(result("SCH_DUPLICATE_COMPONENT_ID", "Error", [component.id], `Component ID ${component.id} is duplicated.`, "Assign a stable unique component ID.")); ids.add(component.id); });
   refs.forEach((items, ref) => { if (items.length > 1) findings.push(result("SCH_DUPLICATE_REFERENCE", "Error", items.map(item => item.id), `Reference ${ref} is used more than once.`, "Assign a unique reference designator.")); });
   normalized.components.forEach(component => { if (!component.value?.trim()) findings.push(result("SCH_MISSING_VALUE", "Warning", [component.id], `${component.ref} has no value.`, "Set a value before generating a BOM.")); if (!component.pins?.length) findings.push(result("SCH_UNVERIFIED_PIN_GEOMETRY", "Info", [component.id], `${component.ref} has no verified pin geometry; pin connectivity is not fully validated.`, "Attach a verified symbol definition with pin coordinates.")); });
   const wireIds = new Set<string>(); normalized.wires.forEach(wire => { if (wireIds.has(wire.id)) findings.push(result("SCH_DUPLICATE_WIRE_ID", "Error", [wire.id], `Wire ID ${wire.id} is duplicated.`, "Assign a stable unique wire ID.")); wireIds.add(wire.id); if (!validPoint(wire.from) || !validPoint(wire.to)) findings.push(result("SCH_INVALID_WIRE_ENDPOINT", "Error", [wire.id], "Wire endpoint coordinates are invalid.", "Repair the wire endpoints.")); });
-  const nodes: Point[] = []; const addNode = (point: Point) => { const existing = nodes.findIndex(candidate => distance(candidate, point) <= CONNECT_TOLERANCE); if (existing >= 0) return existing; nodes.push(point); return nodes.length - 1; }; const parent: number[] = []; const find = (index: number): number => { if (parent[index] === index) return index; parent[index] = find(parent[index]); return parent[index]; }; const union = (a: number, b: number) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent[rb] = ra; };
-  const wireNodeIds = normalized.wires.map(wire => { const a = addNode(wire.from); const b = addNode(wire.to); while (parent.length < nodes.length) parent.push(parent.length); union(a, b); return { wire, a, b }; });
-  normalized.junctions?.forEach(junction => { const node = addNode(junction); while (parent.length < nodes.length) parent.push(parent.length); wireNodeIds.forEach(({ wire, a }) => { if (pointToSegment(junction, wire.from, wire.to) <= CONNECT_TOLERANCE) union(node, a); }); });
-  const pinNodes = normalized.components.flatMap(component => (component.pins ?? []).map(pin => { const point = transformLocalPoint({ x: component.x, y: component.y }, pin.position, component.rotation ?? 0); const node = addNode(point); while (parent.length < nodes.length) parent.push(parent.length); wireNodeIds.forEach(({ wire, a }) => { if (pointToSegment(point, wire.from, wire.to) <= CONNECT_TOLERANCE) union(node, a); }); return { id: `${component.id}:${pin.id}`, point, node, required: pin.required !== false }; }));
-  const junctionAtIntersection = (a: EngineeringWire, b: EngineeringWire) => normalized.junctions?.some(point => pointToSegment(point, a.from, a.to) <= CONNECT_TOLERANCE && pointToSegment(point, b.from, b.to) <= CONNECT_TOLERANCE) ?? false;
-  for (let i = 0; i < wireNodeIds.length; i += 1) for (let j = i + 1; j < wireNodeIds.length; j += 1) { const a = wireNodeIds[i]; const b = wireNodeIds[j]; if (!segmentsIntersect(a.wire.from, a.wire.to, b.wire.from, b.wire.to)) continue; const endpointTouch = [a.wire.from, a.wire.to].some(point => pointToSegment(point, b.wire.from, b.wire.to) <= CONNECT_TOLERANCE) || [b.wire.from, b.wire.to].some(point => pointToSegment(point, a.wire.from, a.wire.to) <= CONNECT_TOLERANCE); if (endpointTouch || junctionAtIntersection(a.wire, b.wire)) union(a.a, b.a); else findings.push(result("SCH_CROSSING_WITHOUT_JUNCTION", "Warning", [a.wire.id, b.wire.id], "Two wires cross without an explicit junction and are not electrically joined.", "Add a junction or route without crossing.")); }
-  pinNodes.forEach(pin => { if (pin.required && !wireNodeIds.some(({ a }) => find(a) === find(pin.node))) findings.push(result("SCH_UNCONNECTED_REQUIRED_PIN", "Error", [pin.id], `Required pin ${pin.id} is not connected to a wire.`, "Connect the pin to a net or mark it intentionally unused.", [pin.point])); });
-  const netRoots = new Map<string, Set<number>>(); wireNodeIds.forEach(({ wire, a }) => { if (!wire.net) return; const roots = netRoots.get(wire.net) ?? new Set<number>(); roots.add(find(a)); netRoots.set(wire.net, roots); }); netRoots.forEach((roots, net) => { if (roots.size > 1) findings.push(result("SCH_DISCONNECTED_NET", "Error", [...roots].map(String), `Net ${net} contains disconnected geometric components.`, "Join the segments or correct the net label.")); }); const rootNets = new Map<number, Set<string>>(); netRoots.forEach((roots, net) => roots.forEach(root => rootNets.set(root, new Set([...(rootNets.get(root) ?? []), net])))); rootNets.forEach((nets, root) => { if (nets.size > 1) findings.push(result("SCH_NET_NAME_CONFLICT", "Error", [...nets], `Different net names share the same geometric connection at node ${root}.`, "Resolve the short or correct the net labels.")); });
+  const nodes: Point[] = [];
+  const addNode = (point: Point) => {
+    let indeterminate = false;
+    const existing = nodes.findIndex(candidate => {
+      const state = safeDistance(candidate, point);
+      if (state === null) { indeterminate = true; return false; }
+      return state <= CONNECT_TOLERANCE;
+    });
+    return { index: existing >= 0 ? existing : (nodes.push(point), nodes.length - 1), indeterminate };
+  };
+  const parent: number[] = [];
+  const find = (index: number): number => { if (parent[index] === index) return index; parent[index] = find(parent[index]); return parent[index]; };
+  const union = (a: number, b: number) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent[rb] = ra; };
+  const wireNodeIds = normalized.wires.map(wire => {
+    const aResult = addNode(wire.from); const bResult = addNode(wire.to);
+    if (aResult.indeterminate || bResult.indeterminate) markIndeterminate([wire.id], "Wire endpoint proximity could not be decided numerically.", [wire.from, wire.to]);
+    while (parent.length < nodes.length) parent.push(parent.length);
+    union(aResult.index, bResult.index);
+    return { wire, a: aResult.index, b: bResult.index };
+  });
+  const wireConnection = (point: Point, wire: EngineeringWire) => connectivityDistance(point, wire.from, wire.to);
+  normalized.junctions?.forEach(junction => {
+    const nodeResult = addNode(junction); if (nodeResult.indeterminate) markIndeterminate([], "Junction proximity could not be decided numerically.", [junction]);
+    while (parent.length < nodes.length) parent.push(parent.length);
+    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(junction, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id], "Junction-to-wire connectivity is numerically indeterminate.", [junction, wire.from, wire.to]); });
+  });
+  const pinNodes = normalized.components.flatMap(component => (component.pins ?? []).map(pin => {
+    const point = transformLocalPoint({ x: component.x, y: component.y }, pin.position, component.rotation ?? 0);
+    const nodeResult = addNode(point); if (nodeResult.indeterminate) markIndeterminate([`${component.id}:${pin.id}`], "Pin proximity could not be decided numerically.", [point]);
+    while (parent.length < nodes.length) parent.push(parent.length);
+    wireNodeIds.forEach(({ wire, a }) => { const state = wireConnection(point, wire); if (state === "TRUE") union(nodeResult.index, a); else if (state === "INDETERMINATE") markIndeterminate([wire.id, `${component.id}:${pin.id}`], "Pin-to-wire connectivity is numerically indeterminate.", [point, wire.from, wire.to]); });
+    return { id: `${component.id}:${pin.id}`, point, node: nodeResult.index, required: pin.required !== false };
+  }));
+  const junctionAtIntersection = (a: EngineeringWire, b: EngineeringWire): NumericState => {
+    if (!normalized.junctions?.length) return "FALSE";
+    let uncertain = false;
+    for (const point of normalized.junctions) { const first = wireConnection(point, a); const second = wireConnection(point, b); if (first === "TRUE" && second === "TRUE") return "TRUE"; if (first === "INDETERMINATE" || second === "INDETERMINATE") uncertain = true; }
+    return uncertain ? "INDETERMINATE" : "FALSE";
+  };
+  for (let i = 0; i < wireNodeIds.length; i += 1) for (let j = i + 1; j < wireNodeIds.length; j += 1) {
+    const a = wireNodeIds[i]; const b = wireNodeIds[j]; const intersection = segmentIntersectionState(a.wire.from, a.wire.to, b.wire.from, b.wire.to);
+    if (intersection === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Wire intersection could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    if (intersection === "FALSE") continue;
+    const endpointStates = [...[a.wire.from, a.wire.to].map(point => wireConnection(point, b.wire)), ...[b.wire.from, b.wire.to].map(point => wireConnection(point, a.wire))];
+    if (endpointStates.includes("INDETERMINATE")) { markIndeterminate([a.wire.id, b.wire.id], "Wire endpoint touch could not be decided numerically.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    const junctionState = junctionAtIntersection(a.wire, b.wire);
+    if (junctionState === "INDETERMINATE") { markIndeterminate([a.wire.id, b.wire.id], "Junction-at-intersection connectivity is numerically indeterminate.", [a.wire.from, a.wire.to, b.wire.from, b.wire.to]); continue; }
+    if (endpointStates.includes("TRUE") || junctionState === "TRUE") union(a.a, b.a); else findings.push(result("SCH_CROSSING_WITHOUT_JUNCTION", "Warning", [a.wire.id, b.wire.id], "Two wires cross without an explicit junction and are not electrically joined.", "Add a junction or route without crossing."));
+  }
+  pinNodes.forEach(pin => { if (pin.required && !topologyIndeterminate && !wireNodeIds.some(({ a }) => find(a) === find(pin.node))) findings.push(result("SCH_UNCONNECTED_REQUIRED_PIN", "Error", [pin.id], `Required pin ${pin.id} is not connected to a wire.`, "Connect the pin to a net or mark it intentionally unused.", [pin.point])); });
+  const netRoots = new Map<string, Set<number>>(); wireNodeIds.forEach(({ wire, a }) => { if (!wire.net) return; const roots = netRoots.get(wire.net) ?? new Set<number>(); roots.add(find(a)); netRoots.set(wire.net, roots); }); if (!topologyIndeterminate) { netRoots.forEach((roots, net) => { if (roots.size > 1) findings.push(result("SCH_DISCONNECTED_NET", "Error", [...roots].map(String), `Net ${net} contains disconnected geometric components.`, "Join the segments or correct the net label.")); }); const rootNets = new Map<number, Set<string>>(); netRoots.forEach((roots, net) => roots.forEach(root => rootNets.set(root, new Set([...(rootNets.get(root) ?? []), net])))); rootNets.forEach((nets, root) => { if (nets.size > 1) findings.push(result("SCH_NET_NAME_CONFLICT", "Error", [...nets], `Different net names share the same geometric connection at node ${root}.`, "Resolve the short or correct the net labels.")); }); }
   return findings;
 }
 
