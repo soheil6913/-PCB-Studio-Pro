@@ -89,6 +89,30 @@ function compareClearance(actual: number, required: number): ClearanceState {
   return shortfall <= uncertainty ? "INDETERMINATE" : "VIOLATION";
 }
 function validPoint(value: unknown): value is Point { return !!value && typeof value === "object" && finite((value as Point).x) && finite((value as Point).y); }
+function validRuntimePad(value: unknown): value is Pad {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const pad = value as Partial<Pad>;
+  if (!validPoint(pad.position) || !finite(pad.width) || pad.width <= 0 || !finite(pad.height) || pad.height <= 0) return false;
+  if (pad.shape !== undefined && pad.shape !== "circle" && pad.shape !== "rect" && pad.shape !== "oval") return false;
+  if ((pad.shape ?? "rect") === "circle" && pad.width !== pad.height) return false;
+  return pad.rotation === undefined || finite(pad.rotation);
+}
+function validRuntimeVia(value: unknown): value is EngineeringVia {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const via = value as Partial<EngineeringVia>;
+  const diameter = via.diameter ?? (finite(via.drill) ? via.drill * 2 : Number.NaN);
+  return validPoint({ x: via.x, y: via.y }) && finite(via.drill) && via.drill > 0 && finite(diameter) && diameter >= via.drill;
+}
+function validRuntimeGeometryOptions(value: unknown): value is GeometryOptions {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const options = value as Record<string, unknown>;
+  if (Object.keys(options).some(key => key !== "gjkMaxIterations")) return false;
+  if (!Object.prototype.hasOwnProperty.call(options, "gjkMaxIterations")) return true;
+  const iterations = options.gjkMaxIterations;
+  return typeof iterations === "number" && !(Number.isInteger(iterations) && iterations >= 1 && !Number.isSafeInteger(iterations));
+}
+function indeterminate(reason: string, iterations = 0): GeometryDistanceResult { return { state: "INDETERMINATE", iterations, reason }; }
 function boardContains(point: Point, board: Board, margin = 0) {
   const left = board.x + margin;
   const right = board.x + board.width - margin;
@@ -122,6 +146,12 @@ export function gjkWithinDistance(
   clearance: number,
   maxIterations = 64,
 ): GjkDecision {
+  if (!validRuntimePad(a))
+    return { state: "INDETERMINATE", iterations: 0, reason: "invalid first pad geometry" };
+  if (!validRuntimePad(b))
+    return { state: "INDETERMINATE", iterations: 0, reason: "invalid second pad geometry" };
+  if (!finite(clearance) || clearance < 0)
+    return { state: "INDETERMINATE", iterations: 0, reason: "invalid clearance" };
   if (!Number.isInteger(maxIterations) || maxIterations < 1)
     return { state: "INDETERMINATE", iterations: 0, reason: "invalid iteration budget" };
 
@@ -255,12 +285,27 @@ function commonAxisOvalDistance(a: Pad, b: Pad): number | null {
   return null;
 }
 function exactDistance(value: number, reason: string): GeometryDistanceResult { return Number.isFinite(value) && value >= 0 ? { state: "CONVERGED", distance: value, iterations: 0, reason } : { state: "INDETERMINATE", iterations: 0, reason: `${reason} produced a non-finite or invalid distance` }; }
-export function padToPadDistanceDetailed(a: Pad, b: Pad, options: GeometryOptions = {}): GeometryDistanceResult { const aShape = a.shape ?? "rect"; const bShape = b.shape ?? "rect"; if (aShape === "circle" && bShape === "circle") return exactDistance(Math.max(0, distance(a.position, b.position) - a.width / 2 - b.width / 2), "analytic circle-circle distance"); if (aShape === "circle") return exactDistance(viaToPadDistance(b, { id: `pad:${a.id}`, x: a.position.x, y: a.position.y, drill: a.width / 2, diameter: a.width }), "analytic circle-to-pad distance"); if (bShape === "circle") return exactDistance(viaToPadDistance(a, { id: `pad:${b.id}`, x: b.position.x, y: b.position.y, drill: b.width / 2, diameter: b.width }), "analytic circle-to-pad distance"); if (aShape === "rect" && bShape === "rect") return exactDistance(rectToRectDistance(a, b), "exact convex rectangle distance"); if (aShape === "rect" && bShape === "oval") return exactDistance(rectToOvalDistance(a, b), "edge-to-ellipse distance"); if (aShape === "oval" && bShape === "rect") return exactDistance(rectToOvalDistance(b, a), "edge-to-ellipse distance"); if (aShape === "oval" && bShape === "oval") { const axisDistance = commonAxisOvalDistance(a, b); if (axisDistance !== null) return exactDistance(axisDistance, "analytic common-axis ellipse distance"); } const maxIterations = options.gjkMaxIterations ?? 64; const origin = { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 }; const localA = localizePad(a, origin); const localB = localizePad(b, origin); const initial = gjkWithinDistance(localA, localB, 0, maxIterations); if (initial.state === "INDETERMINATE") return { state: "INDETERMINATE", iterations: initial.iterations, reason: `initial overlap query: ${initial.reason}` }; if (initial.state === "WITHIN_DISTANCE") return exactDistance(0, "converged overlap query"); let low = 0; let high = distance(localA.position, localB.position) + Math.max(a.width, a.height, b.width, b.height); if (!Number.isFinite(high)) return { state: "INDETERMINATE", iterations: initial.iterations, reason: "non-finite binary-search upper bound" }; for (let i = 0; i < 64; i += 1) { const middle = (low + high) / 2; const decision = gjkWithinDistance(localA, localB, middle, maxIterations); if (decision.state === "INDETERMINATE") return { state: "INDETERMINATE", iterations: decision.iterations, reason: `binary-search iteration ${i + 1}: ${decision.reason}` }; if (decision.state === "WITHIN_DISTANCE") high = middle; else low = middle; } return { state: "CONVERGED", distance: high, iterations: 64, reason: "binary search converged with valid GJK classifications" }; }
+/**
+ * Returns a classified result for valid pad geometry. Malformed runtime pads or
+ * options never throw and are represented as INDETERMINATE with stable reasons.
+ */
+export function padToPadDistanceDetailed(a: Pad, b: Pad, options: GeometryOptions = {}): GeometryDistanceResult {
+  if (!validRuntimePad(a)) return indeterminate("invalid first pad geometry");
+  if (!validRuntimePad(b)) return indeterminate("invalid second pad geometry");
+  if (!validRuntimeGeometryOptions(options)) return indeterminate("invalid geometry options");
+  const aShape = a.shape ?? "rect"; const bShape = b.shape ?? "rect"; if (aShape === "circle" && bShape === "circle") return exactDistance(Math.max(0, distance(a.position, b.position) - a.width / 2 - b.width / 2), "analytic circle-circle distance"); if (aShape === "circle") return exactDistance(viaToPadDistance(b, { id: `pad:${a.id}`, x: a.position.x, y: a.position.y, drill: a.width / 2, diameter: a.width }), "analytic circle-to-pad distance"); if (bShape === "circle") return exactDistance(viaToPadDistance(a, { id: `pad:${b.id}`, x: b.position.x, y: b.position.y, drill: b.width / 2, diameter: b.width }), "analytic circle-to-pad distance"); if (aShape === "rect" && bShape === "rect") return exactDistance(rectToRectDistance(a, b), "exact convex rectangle distance"); if (aShape === "rect" && bShape === "oval") return exactDistance(rectToOvalDistance(a, b), "edge-to-ellipse distance"); if (aShape === "oval" && bShape === "rect") return exactDistance(rectToOvalDistance(b, a), "edge-to-ellipse distance"); if (aShape === "oval" && bShape === "oval") { const axisDistance = commonAxisOvalDistance(a, b); if (axisDistance !== null) return exactDistance(axisDistance, "analytic common-axis ellipse distance"); } const maxIterations = options.gjkMaxIterations ?? 64; const origin = { x: (a.position.x + b.position.x) / 2, y: (a.position.y + b.position.y) / 2 }; const localA = localizePad(a, origin); const localB = localizePad(b, origin); const initial = gjkWithinDistance(localA, localB, 0, maxIterations); if (initial.state === "INDETERMINATE") return { state: "INDETERMINATE", iterations: initial.iterations, reason: `initial overlap query: ${initial.reason}` }; if (initial.state === "WITHIN_DISTANCE") return exactDistance(0, "converged overlap query"); let low = 0; let high = distance(localA.position, localB.position) + Math.max(a.width, a.height, b.width, b.height); if (!Number.isFinite(high)) return { state: "INDETERMINATE", iterations: initial.iterations, reason: "non-finite binary-search upper bound" }; for (let i = 0; i < 64; i += 1) { const middle = (low + high) / 2; const decision = gjkWithinDistance(localA, localB, middle, maxIterations); if (decision.state === "INDETERMINATE") return { state: "INDETERMINATE", iterations: decision.iterations, reason: `binary-search iteration ${i + 1}: ${decision.reason}` }; if (decision.state === "WITHIN_DISTANCE") high = middle; else low = middle; } return { state: "CONVERGED", distance: high, iterations: 64, reason: "binary search converged with valid GJK classifications" }; }
 export function padToPadDistance(a: Pad, b: Pad): number { const calculation = padToPadDistanceDetailed(a, b); if (calculation.state === "INDETERMINATE") throw new GeometryCalculationError(calculation.reason); return calculation.distance; }
 function padLocalPoint(pad: Pad, point: Point) { const radians = -(pad.rotation ?? 0) * Math.PI / 180; const c = Math.cos(radians); const s = Math.sin(radians); const dx = point.x - pad.position.x; const dy = point.y - pad.position.y; return { x: dx * c - dy * s, y: dx * s + dy * c }; }
 function pointToRectBoundaryDistance(point: Point, pad: Pad) { const local = padLocalPoint(pad, point); const dx = Math.max(Math.abs(local.x) - pad.width / 2, 0); const dy = Math.max(Math.abs(local.y) - pad.height / 2, 0); if (Math.abs(local.x) <= pad.width / 2 && Math.abs(local.y) <= pad.height / 2) return 0; return Math.hypot(dx, dy); }
 function pointToEllipseBoundaryDistance(point: Point, pad: Pad) { const local = padLocalPoint(pad, point); const rx = pad.width / 2; const ry = (pad.shape === "circle" ? pad.width : pad.height) / 2; const x = Math.abs(local.x); const y = Math.abs(local.y); if (x === 0 && y === 0) return 0; const normalized = (x * x) / (rx * rx) + (y * y) / (ry * ry); if (normalized < 1) return 0; const f = (lambda: number) => (rx * rx * x * x) / ((lambda + rx * rx) ** 2) + (ry * ry * y * y) / ((lambda + ry * ry) ** 2) - 1; let low = normalized >= 1 ? 0 : -Math.min(rx * rx, ry * ry) * (1 - 1e-12); let high = normalized >= 1 ? Math.max(rx * x, ry * y) : 0; while (f(high) > 0) high = high * 2 + 1; for (let i = 0; i < 96; i += 1) { const middle = (low + high) / 2; if (f(middle) > 0) low = middle; else high = middle; } const lambda = (low + high) / 2; const nearest = { x: rx * rx * x / (lambda + rx * rx), y: ry * ry * y / (lambda + ry * ry) }; return Math.hypot(nearest.x - x, nearest.y - y); }
-export function viaToPadDistance(pad: Pad, via: EngineeringVia): number { const viaRadius = (via.diameter ?? via.drill * 2) / 2; const center = { x: via.x, y: via.y }; const boundaryDistance = (pad.shape ?? "rect") === "rect" ? pointToRectBoundaryDistance(center, pad) : pointToEllipseBoundaryDistance(center, pad); return Math.max(0, boundaryDistance - viaRadius); }
+/**
+ * Numeric compatibility wrapper. Invalid runtime geometry uses the existing
+ * GeometryCalculationError contract rather than returning a plausible number.
+ */
+export function viaToPadDistance(pad: Pad, via: EngineeringVia): number {
+  if (!validRuntimePad(pad)) throw new GeometryCalculationError("invalid pad geometry");
+  if (!validRuntimeVia(via)) throw new GeometryCalculationError("invalid via geometry");
+  const viaRadius = (via.diameter ?? via.drill * 2) / 2; const center = { x: via.x, y: via.y }; const boundaryDistance = (pad.shape ?? "rect") === "rect" ? pointToRectBoundaryDistance(center, pad) : pointToEllipseBoundaryDistance(center, pad); return Math.max(0, boundaryDistance - viaRadius); }
 function halfExtents(pad: Pad) { return { x: pad.width / 2, y: pad.height / 2 }; }
 function segmentToEllipseDistance(start: Point, end: Point, pad: Pad) { const evaluate = (t: number) => pointToEllipseBoundaryDistance({ x: start.x + (end.x - start.x) * t, y: start.y + (end.y - start.y) * t }, pad); let low = 0; let high = 1; for (let i = 0; i < 96; i += 1) { const left = low + (high - low) / 3; const right = high - (high - low) / 3; if (evaluate(left) <= evaluate(right)) high = right; else low = left; } return Math.min(evaluate(0), evaluate(1), evaluate((low + high) / 2)); }
 function segmentToPadDistance(start: Point, end: Point, pad: Pad): number { const shape = pad.shape ?? "rect"; if (shape === "circle") return Math.max(0, pointToSegment(pad.position, start, end) - pad.width / 2); if (shape === "oval") return segmentToEllipseDistance(start, end, pad); const ext = halfExtents(pad); const radians = (pad.rotation ?? 0) * Math.PI / 180; const c = Math.cos(radians); const s = Math.sin(radians); const toLocal = (point: Point) => { const dx = point.x - pad.position.x; const dy = point.y - pad.position.y; return { x: dx * c + dy * s, y: -dx * s + dy * c }; }; const inside = (point: Point) => { const local = toLocal(point); return Math.abs(local.x) <= ext.x + EPSILON && Math.abs(local.y) <= ext.y + EPSILON; }; if (inside(start) || inside(end)) return 0; const fromLocal = (point: Point) => ({ x: pad.position.x + point.x * c - point.y * s, y: pad.position.y + point.x * s + point.y * c }); const corners: Point[] = [fromLocal({ x: -ext.x, y: -ext.y }), fromLocal({ x: ext.x, y: -ext.y }), fromLocal({ x: ext.x, y: ext.y }), fromLocal({ x: -ext.x, y: ext.y })]; let best = Infinity; for (let i = 0; i < 4; i += 1) best = Math.min(best, segmentDistance(start, end, corners[i], corners[(i + 1) % 4])); return best; }
