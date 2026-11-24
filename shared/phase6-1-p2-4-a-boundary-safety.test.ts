@@ -195,21 +195,22 @@ describe("Phase 6.1 P2.4-A validatePcb geometry options", () => {
     },
   );
 
-  it.each([null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 257, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1, "64"])(
+  it.each([null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, "64"])(
     "rejects invalid gjkMaxIterations value (%s)",
     gjkMaxIterations => {
       const findings = validatePcb(base() as never, { gjkMaxIterations } as never);
       expect(findings[0]?.ruleId).toBe("PCB_INVALID_OPTIONS");
-      expect(findings[0]?.correction).toBe("must be an integer between 1 and 256");
+      expect(findings[0]?.correction).toBe("must be a positive safe integer");
     },
   );
 
-  it("accepts omitted options, undefined, an empty object, and iteration budgets within the operational cap", () => {
+  it("accepts omitted options, undefined, an empty object, and positive safe integer budgets", () => {
     expect(validatePcb(base() as never)).toEqual([]);
     expect(validatePcb(base() as never, undefined as never)).toEqual([]);
     expect(validatePcb(base() as never, {})).toEqual([]);
     expect(validatePcb(base() as never, { gjkMaxIterations: 1 })).toEqual([]);
-    expect(validatePcb(base() as never, { gjkMaxIterations: 256 })).toEqual([]);
+    expect(validatePcb(base() as never, { gjkMaxIterations: 257 })).toEqual([]);
+    expect(validatePcb(base() as never, { gjkMaxIterations: Number.MAX_SAFE_INTEGER })).toEqual([]);
   });
 
   it("reaches the rotated Oval-to-Oval GJK path with a valid bounded budget", () => {
@@ -232,10 +233,6 @@ describe("Phase 6.1 P2.4-A validatePcb geometry options", () => {
     const distance = padToPadDistanceDetailed(first as never, second as never, { gjkMaxIterations: 256 });
     expect(distance.state).toBe("CONVERGED");
     if (distance.state === "CONVERGED") expect(Number.isFinite(distance.distance)).toBe(true);
-
-    const overBudget = padToPadDistanceDetailed(first as never, second as never, { gjkMaxIterations: 257 });
-    expect(overBudget.state).toBe("INDETERMINATE");
-    if (overBudget.state === "INDETERMINATE") expect(overBudget.reason).toContain("invalid iteration budget");
 
     const findings = validatePcb(projectWithRotatedOvalPads() as never, { gjkMaxIterations: 256 });
     expect(findings.some(finding => finding.ruleId === "PCB_GEOMETRY_INDETERMINATE")).toBe(false);
