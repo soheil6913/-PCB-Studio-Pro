@@ -73,7 +73,7 @@ describe("Phase 4.1 GJK convergence safety", () => {
     expect(detailed.state).toBe("INDETERMINATE");
     if (detailed.state === "INDETERMINATE") {
       expect(detailed.iterations).toBe(0);
-      expect(detailed.reason).toContain("invalid iteration budget");
+      expect(detailed.reason).toBe("invalid geometry options");
       expect("distance" in detailed).toBe(false);
     }
   });

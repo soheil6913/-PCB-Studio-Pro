@@ -55,11 +55,11 @@ describe("Phase 6.1 P2.4-B geometry API contract", () => {
     }
     expect(padToPadDistanceDetailed(first, second, { gjkMaxIterations: 0 })).toMatchObject({
       state: "INDETERMINATE",
-      reason: "initial overlap query: invalid iteration budget",
+      reason: "invalid geometry options",
     });
     expect(padToPadDistanceDetailed(first, second, { gjkMaxIterations: 1.5 })).toMatchObject({
       state: "INDETERMINATE",
-      reason: "initial overlap query: invalid iteration budget",
+      reason: "invalid geometry options",
     });
   });
 
